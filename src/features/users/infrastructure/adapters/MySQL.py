@@ -6,15 +6,18 @@ from src.core.models import AuditModel, RoleModel, UserModel
 
 
 def snapshot(row):
-    return {key: getattr(row, key) for key in ("id", "name", "paternal_lastname", "maternal_lastname", "email", "phone", "role_id", "active")}
+    return {key: getattr(row, key) for key in ("id", "name", "middle_name", "paternal_lastname", "maternal_lastname", "email", "phone", "role_id", "active")}
 
 
 class MySQLUserRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def list(self, offset, limit):
-        rows = self.session.scalars(select(UserModel).order_by(UserModel.created_at, UserModel.id)
+    def list(self, offset, limit, exclude_user_id=None):
+        query = select(UserModel)
+        if exclude_user_id is not None:
+            query = query.where(UserModel.id != exclude_user_id)
+        rows = self.session.scalars(query.order_by(UserModel.created_at, UserModel.id)
                                     .offset(offset).limit(limit)).all()
         return [to_user(row) for row in rows]
 

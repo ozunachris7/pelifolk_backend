@@ -6,6 +6,7 @@ from src.features.roles.domain.entities.Role import Role
 class User:
     id: str
     name: str
+    middle_name: str | None
     paternal_lastname: str
     maternal_lastname: str
     email: str

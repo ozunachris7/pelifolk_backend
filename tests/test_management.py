@@ -3,6 +3,38 @@ from src.core.models import AuditModel, UserModel
 from tests.conftest import login, PASSWORD
 
 
+def test_separate_first_and_middle_names_are_persisted_and_audited(api):
+    client, factory = api
+    headers = login(client)
+    roles = client.get("/api/v1/roles", headers=headers).json()
+    role_id = next(role["id"] for role in roles if role["name"] == "worker")
+    data = {"name": " Juan ", "middle_name": " Carlos ", "paternal_lastname": "Lopez",
+            "maternal_lastname": "Perez", "email": "juan@example.com", "password": PASSWORD,
+            "role_id": role_id}
+    response = client.post("/api/v1/users", headers=headers, json=data)
+    assert response.status_code == 201, response.text
+    user_id = response.json()["id"]
+    assert response.json()["name"] == "Juan"
+    assert response.json()["middle_name"] == "Carlos"
+    user_headers = login(client, "juan@example.com")
+    assert client.get("/api/v1/auth/me", headers=user_headers).json()["middle_name"] == "Carlos"
+    assert client.get(f"/api/v1/users/{user_id}", headers=headers).json()["middle_name"] == "Carlos"
+    with factory() as session:
+        user = session.get(UserModel, user_id)
+        assert (user.name, user.middle_name) == ("Juan", "Carlos")
+        audit = session.scalar(select(AuditModel).where(AuditModel.record_id == user_id))
+        assert audit.new_values["middle_name"] == "Carlos"
+    assert client.patch(f"/api/v1/users/{user_id}", headers=headers,
+                        json={"middle_name": " "}).status_code == 422
+    assert client.patch(f"/api/v1/users/{user_id}", headers=headers,
+                        json={"middle_name": " Miguel "}).json()["middle_name"] == "Miguel"
+    assert client.patch(f"/api/v1/users/{user_id}", headers=headers,
+                        json={"middle_name": None}).json()["middle_name"] is None
+    data.pop("middle_name")
+    data["email"] = "another@example.com"
+    assert client.post("/api/v1/users", headers=headers, json=data).json()["middle_name"] is None
+
+
 def test_custom_role_user_lifecycle_and_audit(api):
     client, factory = api
     headers = login(client)
@@ -96,6 +128,28 @@ def test_custom_role_can_be_deleted_if_unassigned(api):
     assert client.delete(f"/api/v1/roles/{role['id']}", headers=headers).status_code == 404
 
 
+def test_system_role_permissions_can_be_changed_without_renaming_or_deleting(api):
+    client, factory = api
+    owner = login(client)
+    worker = login(client, "worker@example.com")
+    role = next(role for role in client.get("/api/v1/roles", headers=owner).json() if role["name"] == "worker")
+    response = client.put(f"/api/v1/roles/{role['id']}", headers=owner,
+                          json={"name": "worker", "permissions": ["users:read"]})
+    assert response.status_code == 200, response.text
+    assert response.json()["permissions"] == ["users:read"]
+    assert client.get("/api/v1/users", headers=worker).status_code == 200
+    assert client.put(f"/api/v1/roles/{role['id']}", headers=owner,
+                      json={"name": "renamed_worker", "permissions": ["users:read"]}).status_code == 409
+    assert client.delete(f"/api/v1/roles/{role['id']}", headers=owner).status_code == 409
+    assert client.put(f"/api/v1/roles/{role['id']}", headers=owner,
+                      json={"name": "worker", "permissions": []}).status_code == 200
+    assert client.get("/api/v1/users", headers=worker).status_code == 403
+    with factory() as session:
+        audits = session.scalars(select(AuditModel).where(AuditModel.table == "roles")).all()
+        assert len(audits) == 2
+        assert audits[0].new_values["permissions"] == ["users:read"]
+
+
 def test_delegated_manager_cannot_escalate_or_reset_owner_password(api):
     client, _ = api
     owner = login(client)
@@ -141,3 +195,15 @@ def test_role_reassignment_revokes_existing_session(api):
     assert client.get("/api/v1/auth/me", headers=worker).status_code == 401
     fresh = login(client, "worker@example.com")
     assert client.get("/api/v1/auth/me", headers=fresh).json()["role_name"] == "veterinarian"
+
+
+def test_users_list_excludes_actor_before_pagination(api):
+    client, _ = api
+    headers = login(client)
+    me = client.get('/api/v1/auth/me', headers=headers).json()
+    users = client.get('/api/v1/users', headers=headers).json()
+    assert users and all(user['id'] != me['id'] for user in users)
+    pages = [client.get(f'/api/v1/users?offset={offset}&limit=1', headers=headers).json()
+             for offset in range(len(users) + 1)]
+    assert [page[0]['id'] for page in pages[:-1]] == [user['id'] for user in users]
+    assert pages[-1] == []

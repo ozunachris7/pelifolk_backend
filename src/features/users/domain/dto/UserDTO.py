@@ -5,14 +5,15 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 class UserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=120)
+    middle_name: str | None = Field(default=None, min_length=1, max_length=120)
     paternal_lastname: str = Field(min_length=1, max_length=120)
     maternal_lastname: str = Field(min_length=1, max_length=120)
     email: EmailStr = Field(max_length=190)
-    password: str = Field(min_length=12, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
     role_id: UUID
     phone: str | None = Field(default=None, max_length=30)
 
-    @field_validator("name", "paternal_lastname", "maternal_lastname", "email", mode="before")
+    @field_validator("name", "middle_name", "paternal_lastname", "maternal_lastname", "email", mode="before")
     @classmethod
     def clean(cls, value, info):
         if isinstance(value, str):
@@ -24,18 +25,19 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=120)
+    middle_name: str | None = Field(default=None, min_length=1, max_length=120)
     paternal_lastname: str | None = Field(default=None, min_length=1, max_length=120)
     maternal_lastname: str | None = Field(default=None, min_length=1, max_length=120)
     email: EmailStr | None = Field(default=None, max_length=190)
-    password: str | None = Field(default=None, min_length=12, max_length=128)
+    password: str | None = Field(default=None, min_length=8, max_length=128)
     role_id: UUID | None = None
     phone: str | None = Field(default=None, max_length=30)
     active: bool | None = None
-    clean = field_validator("name", "paternal_lastname", "maternal_lastname", "email", mode="before")(UserCreate.clean.__func__)
+    clean = field_validator("name", "middle_name", "paternal_lastname", "maternal_lastname", "email", mode="before")(UserCreate.clean.__func__)
 
     @model_validator(mode="after")
     def reject_null_fields(self):
-        for name in self.model_fields_set - {"phone"}:
+        for name in self.model_fields_set - {"phone", "middle_name"}:
             if getattr(self, name) is None:
                 raise ValueError(f"{name} cannot be null")
         if not self.model_fields_set:
@@ -46,6 +48,7 @@ class UserUpdate(BaseModel):
 class UserResponse(BaseModel):
     id: str
     name: str
+    middle_name: str | None
     paternal_lastname: str
     maternal_lastname: str
     email: str
@@ -57,6 +60,6 @@ class UserResponse(BaseModel):
 
     @classmethod
     def from_user(cls, user):
-        return cls(id=user.id, name=user.name, paternal_lastname=user.paternal_lastname, maternal_lastname=user.maternal_lastname, email=user.email,
+        return cls(id=user.id, name=user.name, middle_name=user.middle_name, paternal_lastname=user.paternal_lastname, maternal_lastname=user.maternal_lastname, email=user.email,
                    phone=user.phone, active=user.active, role_id=user.role.id,
                    role_name=user.role.name, permissions=list(user.role.permissions))

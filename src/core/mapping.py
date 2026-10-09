@@ -9,5 +9,5 @@ def to_role(row):
 def to_user(row):
     if row is None:
         return None
-    return User(row.id, row.name, row.paternal_lastname, row.maternal_lastname, row.email, row.phone, row.active,
+    return User(row.id, row.name, row.middle_name, row.paternal_lastname, row.maternal_lastname, row.email, row.phone, row.active,
                 to_role(row.role), row.password_hash, row.token_version)

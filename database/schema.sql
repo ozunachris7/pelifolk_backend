@@ -8,38 +8,38 @@ USE pelifolk;
 CREATE TABLE units (
   id     SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   code VARCHAR(20) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 CREATE TABLE breeds (
   id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 CREATE TABLE location_types (
   id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 CREATE TABLE product_types (
   id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 CREATE TABLE administration_routes (
   id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 CREATE TABLE birth_types (
   id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 CREATE TABLE expense_categories (
   id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 CREATE TABLE income_categories (
   id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 CREATE TABLE active_ingredients (
   id SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(120) NOT NULL UNIQUE
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE event_types (
   id     SMALLINT UNSIGNED PRIMARY KEY,
   code VARCHAR(30) NOT NULL UNIQUE,
   name VARCHAR(80) NOT NULL
-) ENGINE=InnoDB;
+);
 INSERT INTO event_types (id, code, name) VALUES
  (1,'observation','Observation'), (2,'diagnosis','Diagnosis'),
  (3,'treatment','Treatment'), (4,'weight','Weight'),
@@ -51,11 +51,12 @@ CREATE TABLE roles (
   id     CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   name VARCHAR(60) NOT NULL UNIQUE,
   is_system BOOLEAN NOT NULL DEFAULT FALSE
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE users (
   id            CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   name        VARCHAR(120) NOT NULL,
+  middle_name VARCHAR(120) DEFAULT NULL,
   paternal_lastname VARCHAR(120) NOT NULL,
   maternal_lastname VARCHAR(120) DEFAULT NULL,
   email         VARCHAR(190) NOT NULL UNIQUE,          
@@ -66,7 +67,7 @@ CREATE TABLE users (
   active        BOOLEAN NOT NULL DEFAULT TRUE,
   created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (role_id) REFERENCES roles(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE role_event_permissions (
   role_id         CHAR(36) NOT NULL,
@@ -75,7 +76,7 @@ CREATE TABLE role_event_permissions (
   PRIMARY KEY (role_id, event_type_id),
   FOREIGN KEY (role_id) REFERENCES roles(id),
   FOREIGN KEY (event_type_id) REFERENCES event_types(id)
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE locations (
@@ -85,7 +86,7 @@ CREATE TABLE locations (
   description       TEXT,
   active            BOOLEAN NOT NULL DEFAULT TRUE,
   FOREIGN KEY (location_type_id) REFERENCES location_types(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE animal_groups (
   id          CHAR(36) PRIMARY KEY DEFAULT (UUID()),
@@ -93,7 +94,7 @@ CREATE TABLE animal_groups (
   description TEXT,
   active      BOOLEAN NOT NULL DEFAULT TRUE,
   created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE animals (
@@ -112,7 +113,7 @@ CREATE TABLE animals (
   CHECK (mother_id IS NULL OR mother_id <> id),
   CHECK (father_id IS NULL OR father_id <> id),
   CHECK (mother_id IS NULL OR father_id IS NULL OR mother_id <> father_id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE animal_breeds (
   animal_id  CHAR(36) NOT NULL,
@@ -122,7 +123,7 @@ CREATE TABLE animal_breeds (
   FOREIGN KEY (animal_id) REFERENCES animals(id) ON DELETE CASCADE,
   FOREIGN KEY (breed_id)   REFERENCES breeds(id)
   
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE group_animals (
   group_id   CHAR(36) NOT NULL,
@@ -133,7 +134,7 @@ CREATE TABLE group_animals (
   FOREIGN KEY (group_id)   REFERENCES animal_groups(id),
   FOREIGN KEY (animal_id) REFERENCES animals(id),
   CHECK (end_date IS NULL OR end_date >= start_date)
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE products (
@@ -145,7 +146,7 @@ CREATE TABLE products (
   active             BOOLEAN NOT NULL DEFAULT TRUE,
   FOREIGN KEY (product_type_id) REFERENCES product_types(id),
   FOREIGN KEY (unit_id)        REFERENCES units(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE product_ingredients (
   product_id  CHAR(36) NOT NULL,
@@ -153,7 +154,7 @@ CREATE TABLE product_ingredients (
   PRIMARY KEY (product_id, ingredient_id),
   FOREIGN KEY (product_id)  REFERENCES products(id) ON DELETE CASCADE,
   FOREIGN KEY (ingredient_id) REFERENCES active_ingredients(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE product_prices (
   product_id   CHAR(36) NOT NULL,
@@ -161,7 +162,7 @@ CREATE TABLE product_prices (
   cost         DECIMAL(12,2) NOT NULL CHECK (cost >= 0),
   PRIMARY KEY (product_id, effective_from),
   FOREIGN KEY (product_id) REFERENCES products(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE health_programs (
   id               CHAR(36) PRIMARY KEY DEFAULT (UUID()),
@@ -173,7 +174,7 @@ CREATE TABLE health_programs (
   notice_days       INT NOT NULL DEFAULT 0 CHECK (notice_days >= 0),
   active           BOOLEAN NOT NULL DEFAULT TRUE,
   FOREIGN KEY (product_id) REFERENCES products(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE health_cases (
   id            CHAR(36) PRIMARY KEY DEFAULT (UUID()),
@@ -187,7 +188,7 @@ CREATE TABLE health_cases (
   CHECK ((status = 'closed' AND closed_date IS NOT NULL)
       OR (status <> 'closed' AND closed_date IS NULL)),
   CHECK (closed_date IS NULL OR closed_date >= start_date)
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE events (
@@ -211,7 +212,7 @@ CREATE TABLE events (
   UNIQUE KEY uq_event_type (id, event_type_id),      
   KEY ix_events_animal_date (animal_id, date),
   KEY ix_events_type_date   (event_type_id, date)
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE event_observations (
@@ -220,7 +221,7 @@ CREATE TABLE event_observations (
   observation    TEXT NOT NULL,
   CHECK (event_type_id = 1),
   FOREIGN KEY (event_id, event_type_id) REFERENCES events(id, event_type_id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE event_diagnoses (
   event_id         CHAR(36) PRIMARY KEY,
@@ -231,7 +232,7 @@ CREATE TABLE event_diagnoses (
   CHECK (event_type_id = 2),
   FOREIGN KEY (event_id, event_type_id) REFERENCES events(id, event_type_id),
   FOREIGN KEY (health_case_id) REFERENCES health_cases(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE event_treatments (
   event_id         CHAR(36) NOT NULL,
@@ -254,7 +255,7 @@ CREATE TABLE event_treatments (
   FOREIGN KEY (program_id)       REFERENCES health_programs(id),
   FOREIGN KEY (dose_unit_id)   REFERENCES units(id),
   FOREIGN KEY (route_id)            REFERENCES administration_routes(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE event_weights (
   event_id      CHAR(36) PRIMARY KEY,
@@ -262,7 +263,7 @@ CREATE TABLE event_weights (
   weight_kg        DECIMAL(7,2) NOT NULL CHECK (weight_kg > 0),
   CHECK (event_type_id = 4),
   FOREIGN KEY (event_id, event_type_id) REFERENCES events(id, event_type_id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE event_matings (
   event_id      CHAR(36) PRIMARY KEY,
@@ -271,7 +272,7 @@ CREATE TABLE event_matings (
   CHECK (event_type_id = 5),
   FOREIGN KEY (event_id, event_type_id) REFERENCES events(id, event_type_id),
   FOREIGN KEY (male_id) REFERENCES animals(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE event_pregnancy_diagnoses (
   event_id       CHAR(36) PRIMARY KEY,
@@ -281,7 +282,7 @@ CREATE TABLE event_pregnancy_diagnoses (
   CHECK (event_type_id = 6),
   FOREIGN KEY (event_id, event_type_id) REFERENCES events(id, event_type_id),
   FOREIGN KEY (mating_event_id) REFERENCES event_matings(event_id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE event_births (
   event_id      CHAR(36) PRIMARY KEY,
@@ -291,7 +292,7 @@ CREATE TABLE event_births (
   CHECK (event_type_id = 7),
   FOREIGN KEY (event_id, event_type_id) REFERENCES events(id, event_type_id),
   FOREIGN KEY (birth_type_id) REFERENCES birth_types(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE event_birth_offspring (
   animal_id          CHAR(36) PRIMARY KEY,             
@@ -300,7 +301,7 @@ CREATE TABLE event_birth_offspring (
   birth_weight_kg DECIMAL(5,2) CHECK (birth_weight_kg > 0),
   FOREIGN KEY (animal_id) REFERENCES animals(id),
   FOREIGN KEY (event_id) REFERENCES event_births(event_id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE exits (
   event_id      CHAR(36) PRIMARY KEY,
@@ -308,7 +309,7 @@ CREATE TABLE exits (
   exit_type    ENUM('sale','death','slaughter','transfer','theft','other') NOT NULL,
   CHECK (event_type_id = 8),
   FOREIGN KEY (event_id, event_type_id) REFERENCES events(id, event_type_id)
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE suppliers (
@@ -318,7 +319,7 @@ CREATE TABLE suppliers (
   email     VARCHAR(190),
   address TEXT,
   active    BOOLEAN NOT NULL DEFAULT TRUE
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE expenses (
   id                 CHAR(36) PRIMARY KEY DEFAULT (UUID()),
@@ -329,7 +330,7 @@ CREATE TABLE expenses (
   description        TEXT,
   FOREIGN KEY (supplier_id)       REFERENCES suppliers(id),
   FOREIGN KEY (expense_category_id) REFERENCES expense_categories(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE expense_allocations (
   id                CHAR(36) PRIMARY KEY DEFAULT (UUID()),
@@ -344,7 +345,7 @@ CREATE TABLE expense_allocations (
   FOREIGN KEY (health_case_id) REFERENCES health_cases(id),
   CHECK ((animal_id IS NOT NULL) + (group_id IS NOT NULL) + (health_case_id IS NOT NULL) = 1)
   
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE incomes (
   id                   CHAR(36) PRIMARY KEY DEFAULT (UUID()),
@@ -355,7 +356,7 @@ CREATE TABLE incomes (
   description          TEXT,
   FOREIGN KEY (income_category_id) REFERENCES income_categories(id),
   FOREIGN KEY (exit_event_id)     REFERENCES exits(event_id)
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE feeds (
@@ -363,7 +364,7 @@ CREATE TABLE feeds (
   name    VARCHAR(150) NOT NULL UNIQUE,
   unit_id SMALLINT UNSIGNED NOT NULL,
   FOREIGN KEY (unit_id) REFERENCES units(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE feed_prices (
   feed_id    CHAR(36) NOT NULL,
@@ -371,7 +372,7 @@ CREATE TABLE feed_prices (
   unit_cost DECIMAL(12,4) NOT NULL CHECK (unit_cost >= 0),
   PRIMARY KEY (feed_id, effective_from),
   FOREIGN KEY (feed_id) REFERENCES feeds(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE feedings (
   id          CHAR(36) PRIMARY KEY DEFAULT (UUID()),
@@ -386,7 +387,7 @@ CREATE TABLE feedings (
   CHECK ((animal_id IS NOT NULL) + (group_id IS NOT NULL) = 1),
   KEY ix_feeding_animal_date (animal_id, date),
   KEY ix_feeding_group_date   (group_id, date)
-) ENGINE=InnoDB;
+);
 
 
 CREATE TABLE audit_logs (
@@ -401,7 +402,7 @@ CREATE TABLE audit_logs (
   FOREIGN KEY (user_id) REFERENCES users(id),
   KEY ix_audit_record (table_name, record_id),
   KEY ix_audit_date (date)
-) ENGINE=InnoDB;
+);
 
 
 
@@ -484,12 +485,15 @@ SELECT a.*,
        COALESCE(bj.exit_type, 'active') AS status,
        u.location_id
 FROM animals a
-LEFT JOIN (SELECT e.animal_id, s.exit_type
-           FROM exits s JOIN events e ON e.id = s.event_id) bj ON bj.animal_id = a.id
+LEFT JOIN LATERAL (
+  SELECT s.exit_type FROM exits s JOIN events e ON e.id = s.event_id
+  WHERE e.animal_id = a.id
+  ORDER BY e.date DESC, e.created_at DESC, e.id DESC LIMIT 1
+) bj ON TRUE
 LEFT JOIN LATERAL (
   SELECT e.location_id FROM events e
   WHERE e.animal_id = a.id AND e.location_id IS NOT NULL
-  ORDER BY e.date DESC LIMIT 1
+  ORDER BY e.date DESC, e.created_at DESC, e.id DESC LIMIT 1
 ) u ON TRUE;
 
 CREATE VIEW v_breed_composition AS
@@ -500,19 +504,19 @@ FROM animal_breeds GROUP BY animal_id;
 CREATE VIEW v_feeding_cost AS
 SELECT al.*, al.quantity * p.unit_cost AS cost
 FROM feedings al
-JOIN LATERAL (
+LEFT JOIN LATERAL (
   SELECT ap.unit_cost FROM feed_prices ap
   WHERE ap.feed_id = al.feed_id AND ap.effective_from <= al.date
   ORDER BY ap.effective_from DESC LIMIT 1
 ) p ON TRUE;
 
--- Action-based permissions for the implemented users and roles features.
+-- Action-based permissions for users, roles and animals.
 CREATE TABLE role_permissions (
   role_id CHAR(36) NOT NULL,
   permission VARCHAR(80) NOT NULL,
   PRIMARY KEY (role_id, permission),
   FOREIGN KEY (role_id) REFERENCES roles(id)
-) ENGINE=InnoDB;
+);
 
 INSERT INTO roles (id, name, is_system) VALUES
  ('00000000-0000-4000-8000-000000000001', 'owner', TRUE),
@@ -527,4 +531,9 @@ SELECT roles.id, permissions.code FROM roles
 CROSS JOIN (
  SELECT 'users:read' AS code UNION ALL SELECT 'users:write'
  UNION ALL SELECT 'roles:read' UNION ALL SELECT 'roles:write'
+ UNION ALL SELECT 'animals:read' UNION ALL SELECT 'animals:write'
+ UNION ALL SELECT 'locations:read' UNION ALL SELECT 'locations:write'
+ UNION ALL SELECT 'groups:read' UNION ALL SELECT 'groups:write'
 ) permissions WHERE roles.name IN ('owner', 'administrator');
+
+INSERT INTO location_types (name) VALUES ('corral'), ('pasture'), ('barn'), ('other');

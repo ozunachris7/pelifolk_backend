@@ -6,11 +6,12 @@ CREATE TABLE roles (
   id     CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   name VARCHAR(60) NOT NULL UNIQUE,
   is_system BOOLEAN NOT NULL DEFAULT FALSE
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE users (
   id            CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   name        VARCHAR(120) NOT NULL,
+  middle_name VARCHAR(120) DEFAULT NULL,
   paternal_lastname VARCHAR(120) NOT NULL,
   maternal_lastname VARCHAR(120) NOT NULL,
   email         VARCHAR(190) NOT NULL UNIQUE,          
@@ -21,7 +22,7 @@ CREATE TABLE users (
   active        BOOLEAN NOT NULL DEFAULT TRUE,
   created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (role_id) REFERENCES roles(id)
-) ENGINE=InnoDB;
+);
 
 CREATE TABLE audit_logs (
   id                 CHAR(36) PRIMARY KEY DEFAULT (UUID()),
@@ -35,7 +36,7 @@ CREATE TABLE audit_logs (
   FOREIGN KEY (user_id) REFERENCES users(id),
   KEY ix_audit_record (table_name, record_id),
   KEY ix_audit_date (date)
-) ENGINE=InnoDB;
+);
 
 -- Action-based permissions for the implemented users and roles features.
 CREATE TABLE role_permissions (
@@ -43,7 +44,7 @@ CREATE TABLE role_permissions (
   permission VARCHAR(80) NOT NULL,
   PRIMARY KEY (role_id, permission),
   FOREIGN KEY (role_id) REFERENCES roles(id)
-) ENGINE=InnoDB;
+);
 
 INSERT INTO roles (id, name, is_system) VALUES
  ('00000000-0000-4000-8000-000000000001', 'owner', TRUE),

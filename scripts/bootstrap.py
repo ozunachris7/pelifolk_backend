@@ -13,6 +13,8 @@ def main():
     parser = argparse.ArgumentParser(description="Create the first owner; both surnames are required.")
     parser.add_argument("--email", required=True)
     parser.add_argument("--name", required=True)
+    parser.add_argument("--middle-name")
+    parser.add_argument("--phone")
     parser.add_argument("--paternal-lastname", required=True)
     parser.add_argument("--maternal-lastname", required=True)
     args = parser.parse_args()
@@ -22,11 +24,11 @@ def main():
             raise SystemExit("Apply the SQL schema and role seed first")
         if session.scalar(select(UserModel.id).limit(1)):
             raise SystemExit("Bootstrap is only available before the first user; use the protected API")
-        password = getpass.getpass("Password (minimum 12 characters): ")
+        password = getpass.getpass("Password (minimum 8 characters): ")
         if password != getpass.getpass("Confirm password: "):
             raise SystemExit("Passwords do not match")
-        data = UserCreate(name=args.name, paternal_lastname=args.paternal_lastname,
-                          maternal_lastname=args.maternal_lastname, email=args.email,
+        data = UserCreate(name=args.name, middle_name=args.middle_name, paternal_lastname=args.paternal_lastname,
+                          maternal_lastname=args.maternal_lastname, email=args.email, phone=args.phone,
                           password=password, role_id=role.id)
         values = data.model_dump(exclude={"password"})
         values["role_id"] = str(values["role_id"])

@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from src.core.config import get_settings
 from src.core.database import get_db
-from src.core.models import Base, RoleModel, RolePermissionModel, UserModel
+from src.core.models import BirthTypeModel, ProductTypeModel, UnitModel, AdministrationRouteModel, EventTypeModel, Base, RoleModel, RolePermissionModel, UserModel
 from src.core.security import hash_password
 from src.features.roles.domain.entities.Role import INITIAL_ROLES, PERMISSIONS
 from main import create_app
@@ -27,6 +27,13 @@ def api():
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     with factory.begin() as session:
+        session.add(BirthTypeModel(id=1,name='natural'))
+        session.add_all([EventTypeModel(id=i,code=code,name=code) for i,code in [(5,'mating'),(6,'pregnancy_diagnosis'),(7,'birth'),(8,'exit')]])
+        session.add_all([ProductTypeModel(id=1,name='medicine'), UnitModel(id=1,code='ml'), AdministrationRouteModel(id=1,name='oral')])
+        session.add(EventTypeModel(id=3,code='treatment',name='Treatment'))
+        session.add(EventTypeModel(id=2, code='diagnosis', name='Diagnosis'))
+        session.add(EventTypeModel(id=1, code='observation', name='Observation'))
+        session.add(EventTypeModel(id=4, code='weight', name='Weight'))
         for name in INITIAL_ROLES:
             privileges = PERMISSIONS if name in {"owner", "administrator"} else set()
             role = RoleModel(name=name, is_system=True,
@@ -35,7 +42,7 @@ def api():
             session.flush()
             session.add(UserModel(name=name.title(), paternal_lastname="Example", maternal_lastname="Maternal", email=f"{name}@example.com",
                                   role_id=role.id, password_hash=hash_password(PASSWORD), active=True))
-    app = create_app()
+    app = create_app(migrate_on_startup=False)
     def database():
         with factory() as session:
             try:

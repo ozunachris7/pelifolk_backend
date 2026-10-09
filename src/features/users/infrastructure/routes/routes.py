@@ -22,7 +22,7 @@ def repository(db: Session = Depends(get_db, scope="function")):
 @router.get("", response_model=list[UserResponse])
 def list_users(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
                actor=Depends(require_permission("users:read")), repo=Depends(repository)):
-    return [UserResponse.from_user(user) for user in GetAllUsersUseCase(repo).execute(offset, limit)]
+    return [UserResponse.from_user(user) for user in GetAllUsersUseCase(repo).execute(offset, limit, actor.id)]
 
 
 @router.get("/{user_id}", response_model=UserResponse)
