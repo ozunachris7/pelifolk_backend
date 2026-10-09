@@ -10,13 +10,13 @@ def test_custom_role_user_lifecycle_and_audit(api):
                        json={"name": "health_supervisor", "permissions": ["roles:read"]})
     assert role.status_code == 201, role.text
     role_id = role.json()["id"]
-    data = {"name": "Ana", "lastname": "Lopez", "email": " ANA@example.com ",
+    data = {"name": "Ana", "paternal_lastname": "Lopez", "maternal_lastname": "Maternal", "email": " ANA@example.com ",
             "password": PASSWORD, "role_id": role_id}
     response = client.post("/api/v1/users", headers=headers, json=data)
     assert response.status_code == 201, response.text
     user_id = response.json()["id"]
     assert response.json()["email"] == "ana@example.com"
-    assert response.json()["lastname"] == "Lopez"
+    assert response.json()["paternal_lastname"] == "Lopez"
     assert "password" not in response.text
     ana = login(client, "ana@example.com")
     assert client.get("/api/v1/roles", headers=ana).status_code == 200
@@ -43,14 +43,14 @@ def test_duplicates_missing_relations_and_validation(api):
     roles = client.get("/api/v1/roles", headers=headers).json()
     assert len(roles) == 6
     role_id = roles[0]["id"]
-    data = {"name": "New", "lastname": "Person", "email": "owner@example.com",
+    data = {"name": "New", "paternal_lastname": "Person", "maternal_lastname": "Maternal", "email": "owner@example.com",
             "password": PASSWORD, "role_id": role_id}
     assert client.post("/api/v1/users", headers=headers, json=data).status_code == 409
     data["email"] = "new@example.com"
     data["role_id"] = "11111111-1111-4111-8111-111111111111"
     assert client.post("/api/v1/users", headers=headers, json=data).status_code == 404
     data["role_id"] = role_id
-    data.pop("lastname")
+    data.pop("paternal_lastname")
     assert client.post("/api/v1/users", headers=headers, json=data).status_code == 422
     assert client.post("/api/v1/roles", headers=headers, json={"name": "owner"}).status_code == 409
     assert client.post("/api/v1/roles", headers=headers,
@@ -69,7 +69,7 @@ def test_protect_system_roles_and_own_account(api):
     assert client.delete(f"/api/v1/roles/{role_id}", headers=headers).status_code == 409
     assert client.put(f"/api/v1/roles/{role_id}", headers=headers,
                       json={"name": "owner", "permissions": []}).status_code == 409
-    assert client.patch(f"/api/v1/users/{user_id}", headers=headers, json={"lastname": None}).status_code == 422
+    assert client.patch(f"/api/v1/users/{user_id}", headers=headers, json={"paternal_lastname": None}).status_code == 422
 
 
 def test_password_change_revokes_tokens_and_never_audits_password(api):
@@ -104,7 +104,7 @@ def test_delegated_manager_cannot_escalate_or_reset_owner_password(api):
     owner_role = next(role for role in roles if role["name"] == "owner")
     custom = client.post("/api/v1/roles", headers=owner,
                          json={"name": "limited_manager", "permissions": ["users:write", "roles:write"]}).json()
-    user = {"name": "Limited", "lastname": "Manager", "email": "limited@example.com",
+    user = {"name": "Limited", "paternal_lastname": "Manager", "maternal_lastname": "Maternal", "email": "limited@example.com",
             "password": PASSWORD, "role_id": custom["id"]}
     assert client.post("/api/v1/users", headers=owner, json=user).status_code == 201
     limited = login(client, "limited@example.com")
@@ -122,7 +122,7 @@ def test_validation_errors_do_not_echo_passwords(api):
     client, _ = api
     headers = login(client)
     response = client.post("/api/v1/users", headers=headers,
-                           json={"name": "New", "lastname": "Person", "email": "new@example.com",
+                           json={"name": "New", "paternal_lastname": "Person", "maternal_lastname": "Maternal", "email": "new@example.com",
                                  "password": "shortsecret", "role_id": "invalid"})
     assert response.status_code == 422
     assert "shortsecret" not in response.text

@@ -23,7 +23,7 @@ Elegir **uno** de estos scripts para una instalación nueva en MySQL Workbench:
 
 No ejecutar ambos. Ninguno migra ni elimina la base `ganaderia` existente. Una migración de sus datos requiere respaldo y una estrategia explícita; los apellidos existentes no se pueden inventar. El esquema completo conserva el modelado del demo; los ajustes sanitarios, reproductivos y económicos de la revisión anterior siguen pendientes. Los catálogos de esos módulos todavía no tienen datos iniciales.
 
-`users` incluye `name`, `lastname`, `email`, `phone`, `role_id`, `password_hash`, `active`, `token_version` y `created_at`. Cada usuario tiene un rol, igual que en el demo. Los identificadores son UUID.
+`users` incluye `name`, `paternal_lastname`, `maternal_lastname`, `email`, `phone`, `role_id`, `password_hash`, `active`, `token_version` y `created_at`. Cada usuario tiene un rol, igual que en el demo. Los identificadores son UUID.
 
 Roles iniciales: `owner` (dueño), `administrator` (administrador), `manager` (encargado), `worker` (trabajador), `veterinarian` y `livestock_technician`. Owner y administrator pueden gestionar usuarios y roles. Los demás pueden iniciar sesión y consultar su propia identidad; sus permisos de negocio se incorporarán con cada módulo. Los seis roles iniciales están protegidos contra edición/borrado para conservar una vía de administración. Los roles personalizados pueden crearse, modificarse y eliminarse si no tienen usuarios asignados.
 
@@ -34,7 +34,7 @@ Los permisos disponibles inicialmente son `users:read`, `users:write`, `roles:re
 Después de aplicar el SQL y configurar `.env`:
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.bootstrap --email owner@example.com --name Christhoper --lastname Ozuna
+.\.venv\Scripts\python.exe -m scripts.bootstrap --email owner@example.com --name Christhoper --paternal-lastname Ozuna --maternal-lastname "APELLIDO_MATERNO"
 .\.venv\Scripts\python.exe -m uvicorn main:app --reload
 ```
 
@@ -69,7 +69,7 @@ Ejemplo de rol nuevo:
 Ejemplo de usuario:
 
 ```json
-{"name": "Ana", "lastname": "López", "email": "ana@example.com", "password": "A-long-unique-password", "role_id": "00000000-0000-4000-8000-000000000005"}
+{"name": "Ana", "paternal_lastname": "López", "maternal_lastname": "Pérez", "email": "ana@example.com", "password": "A-long-unique-password", "role_id": "00000000-0000-4000-8000-000000000005"}
 ```
 
 Contraseñas con Argon2 y JWT HS256 con issuer/audience y vencimiento. Logout invalida **todas las sesiones del usuario**; cambios de contraseña, rol o actividad también invalidan sus tokens. Los permisos se leen de la base en cada solicitud. Tokens vencidos requieren nuevo login; refresh tokens y recuperación de contraseña quedan pendientes. Antes de publicar, incorporar HTTPS y límites de intentos de login en la infraestructura.

@@ -7,7 +7,7 @@ class User:
     id: str
     name: str
     paternal_lastname: str
-    maternal_lastname: str | None
+    maternal_lastname: str
     email: str
     phone: str | None
     active: bool

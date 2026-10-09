@@ -11,7 +11,8 @@ CREATE TABLE roles (
 CREATE TABLE users (
   id            CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   name        VARCHAR(120) NOT NULL,
-  lastname    VARCHAR(120) NOT NULL,
+  paternal_lastname VARCHAR(120) NOT NULL,
+  maternal_lastname VARCHAR(120) NOT NULL,
   email         VARCHAR(190) NOT NULL UNIQUE,          
   phone      VARCHAR(30),
   role_id        CHAR(36) NOT NULL,

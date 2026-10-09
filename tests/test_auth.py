@@ -12,7 +12,7 @@ def test_login_me_and_logout_revokes_all_tokens(api):
     second = login(client)
     response = client.get("/api/v1/auth/me", headers=first)
     assert response.status_code == 200
-    assert response.json()["lastname"] == "Example"
+    assert response.json()["paternal_lastname"] == "Example"
     assert response.json()["role_name"] == "owner"
     assert "password_hash" not in response.text
     assert client.post("/api/v1/auth/logout", headers=first).status_code == 204

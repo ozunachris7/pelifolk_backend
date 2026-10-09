@@ -6,7 +6,7 @@ from src.core.models import AuditModel, RoleModel, UserModel
 
 
 def snapshot(row):
-    return {key: getattr(row, key) for key in ("id", "name", "lastname", "email", "phone", "role_id", "active")}
+    return {key: getattr(row, key) for key in ("id", "name", "paternal_lastname", "maternal_lastname", "email", "phone", "role_id", "active")}
 
 
 class MySQLUserRepository:

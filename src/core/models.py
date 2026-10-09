@@ -31,7 +31,8 @@ class UserModel(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(120))
-    lastname: Mapped[str] = mapped_column(String(120))
+    paternal_lastname: Mapped[str] = mapped_column(String(120))
+    maternal_lastname: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(190), unique=True)
     phone: Mapped[str | None] = mapped_column(String(30))
     role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"))

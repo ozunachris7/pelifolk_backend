@@ -33,7 +33,7 @@ def api():
                              permissions=[RolePermissionModel(permission=p) for p in privileges])
             session.add(role)
             session.flush()
-            session.add(UserModel(name=name.title(), lastname="Example", email=f"{name}@example.com",
+            session.add(UserModel(name=name.title(), paternal_lastname="Example", maternal_lastname="Maternal", email=f"{name}@example.com",
                                   role_id=role.id, password_hash=hash_password(PASSWORD), active=True))
     app = create_app()
     def database():

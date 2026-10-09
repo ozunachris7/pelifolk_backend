@@ -6,7 +6,7 @@ class UserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=120)
     paternal_lastname: str = Field(min_length=1, max_length=120)
-    maternal_lastname: str = Field(default=None, min_length=1, max_length=120)
+    maternal_lastname: str = Field(min_length=1, max_length=120)
     email: EmailStr = Field(max_length=190)
     password: str = Field(min_length=12, max_length=128)
     role_id: UUID
@@ -47,7 +47,7 @@ class UserResponse(BaseModel):
     id: str
     name: str
     paternal_lastname: str
-    maternal_lastname: str | None
+    maternal_lastname: str
     email: str
     phone: str | None
     active: bool
