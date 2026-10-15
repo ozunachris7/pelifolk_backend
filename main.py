@@ -12,10 +12,14 @@ from src.core.errors import ApplicationError
 from src.features.auth.infrastructure.routes.routes import router as auth_router
 from src.features.users.infrastructure.routes.routes import router as users_router
 from src.features.roles.infrastructure.routes.routes import router as roles_router
+from src.features.animals.infrastructure.decisions import router as decisions_router
 from src.features.animals.infrastructure.routes import router as animals_router
+from src.features.animals.infrastructure.timeline import router as timeline_router
 from src.features.organization.infrastructure.routes import router as organization_router
+from src.features.organization.infrastructure.movements import router as movements_router
 
 
+from src.features.weaning.routes import router as weaning_router
 from src.features.weights.infrastructure.routes import router as weights_router
 
 
@@ -23,12 +27,29 @@ from src.features.health.infrastructure.routes import router as health_router
 
 
 from src.features.breeding.infrastructure.routes import router as breeding_router
+from src.features.breeding.infrastructure.upcoming import router as upcoming_births_router
+from src.features.breeding.infrastructure.performance import router as performance_router
 
 
+from src.features.health.infrastructure.followups import router as followups_router
+from src.features.audit.infrastructure.routes import router as audit_router
+from src.features.health.infrastructure.withdrawals import router as withdrawals_router
 from src.features.exits.infrastructure.routes import router as exits_router
 
 
 from src.features.finance.infrastructure.routes import router as finance_router
+from src.features.finance.infrastructure.allocations import router as allocations_router
+
+
+from src.features.feeding.infrastructure.routes import router as feeding_router
+from src.features.dashboard.infrastructure.routes import router as dashboard_router
+from src.features.reports.infrastructure.routes import router as reports_router
+from src.features.reports.infrastructure.health import router as health_reports_router
+from src.features.reports.infrastructure.breeding import router as breeding_reports_router
+from src.features.reports.infrastructure.finance import router as finance_reports_router
+from src.features.reports.infrastructure.feeding import router as feeding_reports_router
+from src.features.reports.infrastructure.weights import router as weight_reports_router
+from src.features.reports.infrastructure.weanings import router as weaning_reports_router
 
 
 def create_app(*, migrate_on_startup: bool = True) -> FastAPI:
@@ -68,15 +89,34 @@ def create_app(*, migrate_on_startup: bool = True) -> FastAPI:
         return {"message": "Pelifolk API is running"}
 
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(audit_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(roles_router, prefix="/api/v1")
     app.include_router(animals_router, prefix="/api/v1")
+    app.include_router(timeline_router, prefix="/api/v1")
+    app.include_router(decisions_router, prefix="/api/v1")
     app.include_router(organization_router, prefix="/api/v1")
+    app.include_router(movements_router, prefix="/api/v1")
     app.include_router(weights_router, prefix="/api/v1")
+    app.include_router(weaning_router, prefix="/api/v1")
     app.include_router(health_router, prefix="/api/v1")
+    app.include_router(followups_router, prefix="/api/v1")
+    app.include_router(withdrawals_router, prefix="/api/v1")
     app.include_router(breeding_router,prefix="/api/v1")
+    app.include_router(upcoming_births_router, prefix="/api/v1")
+    app.include_router(performance_router, prefix="/api/v1")
     app.include_router(exits_router, prefix="/api/v1")
     app.include_router(finance_router, prefix="/api/v1")
+    app.include_router(allocations_router, prefix="/api/v1")
+    app.include_router(feeding_router, prefix="/api/v1")
+    app.include_router(dashboard_router, prefix="/api/v1")
+    app.include_router(reports_router, prefix="/api/v1")
+    app.include_router(health_reports_router, prefix="/api/v1")
+    app.include_router(breeding_reports_router, prefix="/api/v1")
+    app.include_router(finance_reports_router, prefix="/api/v1")
+    app.include_router(feeding_reports_router, prefix="/api/v1")
+    app.include_router(weight_reports_router, prefix="/api/v1")
+    app.include_router(weaning_reports_router, prefix="/api/v1")
     return app
 
 

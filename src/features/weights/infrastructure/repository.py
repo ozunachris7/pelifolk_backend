@@ -2,7 +2,7 @@ from datetime import date
 from src.core.herd import has_exited, ensure_in_herd
 from datetime import datetime, time
 from sqlalchemy import select, func, or_, exists
-from src.core.models import AnimalModel, EventModel, EventWeightModel, UserModel, AuditModel
+from src.core.models import AnimalModel, EventModel, EventWeightModel, UserModel, AuditModel, EventWeaningModel
 from src.core.errors import ApplicationError
 
 
@@ -31,11 +31,11 @@ class SQLWeightRepository:
 
     def query(self):
         replacement = select(EventModel.id).where(EventModel.replaced_event_id == EventWeightModel.event_id).correlate(EventWeightModel)
-        return select(EventModel, EventWeightModel, AnimalModel, UserModel).join(EventWeightModel, EventWeightModel.event_id == EventModel.id).join(AnimalModel, AnimalModel.id == EventModel.animal_id).join(UserModel, UserModel.id == EventModel.user_id).where(EventModel.event_type_id == 4, ~exists(replacement))
+        return select(EventModel, EventWeightModel, AnimalModel, UserModel).join(EventWeightModel, EventWeightModel.event_id == EventModel.id).join(AnimalModel, AnimalModel.id == EventModel.animal_id).join(UserModel, UserModel.id == EventModel.user_id).outerjoin(EventWeaningModel,EventWeaningModel.event_id == EventModel.id).add_columns(EventWeaningModel.event_id).where(EventModel.event_type_id == 4, ~exists(replacement))
 
     def response(self, row):
-        event, weight, animal, user = row
-        return dict(id=event.id, animal=self.summary(animal), date=event.date.date(), weight_kg=weight.weight_kg, notes=event.reason,
+        event, weight, animal, user, *weaning = row
+        return dict(is_weaning=bool(weaning and weaning[0]),id=event.id, animal=self.summary(animal), date=event.date.date(), weight_kg=weight.weight_kg, notes=event.reason,
                     recorded_by=' '.join(filter(None, [user.name, user.middle_name, user.paternal_lastname, user.maternal_lastname])))
 
     def page(self, q, offset, limit):

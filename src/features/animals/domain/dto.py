@@ -65,6 +65,13 @@ class ParentResponse(BaseModel):
     siniiga: str | None
 
 
+class CurrentLocation(BaseModel):
+    id: str
+    name: str
+    active: bool
+    since: date
+
+
 class AnimalResponse(BaseModel):
     id: str
     name: str | None
@@ -79,13 +86,32 @@ class AnimalResponse(BaseModel):
     breeds: list[BreedShareResponse]
     mother: ParentResponse | None
     father: ParentResponse | None
+    current_location: CurrentLocation | None = None
     status: str = 'active'
     exit_date: date | None = None
     purity: Literal['pure', 'crossbred'] | None
 
 
 class AnimalPage(BaseModel):
+    excluded_parent_ids: list[str] = Field(default_factory=list)
     items: list[AnimalResponse]
     total: int
+    offset: int
+    limit: int
+
+
+class AncestorResponse(BaseModel):
+    animal: AnimalResponse
+    mother: 'AncestorResponse | None' = None
+    father: 'AncestorResponse | None' = None
+
+
+class GenealogyResponse(BaseModel):
+    as_of: date
+    tree: AncestorResponse
+    children: list[AnimalResponse]
+    total_children: int
+    female_children: int
+    male_children: int
     offset: int
     limit: int

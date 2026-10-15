@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 from src.core.database import get_db
 from src.features.auth.infrastructure.dependencies import require_permission
 from src.features.animals.application.manage_animals import ManageAnimals
-from src.features.animals.domain.dto import AnimalInput, AnimalPage, AnimalResponse, BreedInput, BreedResponse
+from src.features.animals.domain.dto import AnimalInput, AnimalPage, AnimalResponse, BreedInput, BreedResponse, GenealogyResponse
 from .repository import SQLAnimalRepository
+from .genealogy import genealogy
 
 router = APIRouter(tags=['Animals'])
 
@@ -40,9 +41,9 @@ def delete_breed(breed_id: int = Path(gt=0), actor=Depends(require_permission('a
 
 @router.get('/animals', response_model=AnimalPage)
 def animals(q: str = Query('', max_length=100), sex: Literal['male', 'female'] | None = None,
-            offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=100), exclude_id: UUID | None = None, active: bool | None = None,
+            offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=100), exclude_id: UUID | None = None, active: bool | None = None, parent_of: UUID | None = None,
             actor=Depends(require_permission('animals:read')), repo=Depends(repository)):
-    return repo.list(q.strip(), sex, offset, limit, str(exclude_id) if exclude_id else None, active)
+    return repo.list(q.strip(), sex, offset, limit, str(exclude_id) if exclude_id else None, active, str(parent_of) if parent_of else None)
 
 
 @router.get('/animals/{animal_id}', response_model=AnimalResponse)
@@ -58,3 +59,9 @@ def create_animal(data: AnimalInput, actor=Depends(require_permission('animals:w
 @router.put('/animals/{animal_id}', response_model=AnimalResponse)
 def update_animal(animal_id: UUID, data: AnimalInput, actor=Depends(require_permission('animals:write')), repo=Depends(repository)):
     return ManageAnimals(repo).save(data, actor, str(animal_id))
+
+
+@router.get('/animals/{animal_id}/genealogy', response_model=GenealogyResponse)
+def animal_genealogy(animal_id: UUID, offset: int = Query(0, ge=0), limit: int = Query(12, ge=1, le=100),
+                     actor=Depends(require_permission('animals:read')), db: Session = Depends(get_db, scope='function')):
+    return genealogy(db, str(animal_id), offset, limit)

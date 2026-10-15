@@ -6,7 +6,7 @@ from src.core.database import get_db
 from src.core.models import BirthTypeModel
 from sqlalchemy import select
 from src.features.auth.infrastructure.dependencies import require_permission
-from src.features.breeding.domain.dto import MatingInput,PregnancyInput,BirthInput,BreedingEvent,EventPage,BreedingHistory,AnimalSummary,BirthTypeResponse
+from src.features.breeding.domain.dto import MatingInput,PregnancyInput,BirthInput,BreedingEvent,EventPage,BreedingHistory,AnimalSummary,BirthTypeResponse,KinshipResponse
 from .repository import SQLBreedingRepository
 router=APIRouter(prefix='/breeding',tags=['Breeding'])
 def repository(db: Session=Depends(get_db,scope='function')):return SQLBreedingRepository(db)
@@ -24,3 +24,10 @@ def mating(data: MatingInput,actor=Depends(require_permission('breeding:write'))
 def pregnancy(data: PregnancyInput,actor=Depends(require_permission('breeding:write')),repo=Depends(repository)):return repo.create('pregnancy',data,actor)
 @router.post('/births',response_model=BreedingEvent,status_code=201)
 def birth(data: BirthInput,actor=Depends(require_permission('breeding:write')),repo=Depends(repository)):return repo.create('birth',data,actor)
+
+
+@router.get('/kinship', response_model=KinshipResponse)
+def kinship(animal_id: UUID, male_id: UUID, actor=Depends(require_permission('breeding:read')),
+            repo=Depends(repository)):
+    from .kinship import check_kinship
+    return check_kinship(repo.db,str(animal_id),str(male_id))

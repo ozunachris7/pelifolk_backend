@@ -1,7 +1,7 @@
 from src.core.herd import has_exited, ensure_in_herd
 from datetime import date, datetime, time, timezone, timedelta
 from sqlalchemy import select, func, or_, exists
-from src.core.models import AnimalModel, EventModel, EventObservationModel, HealthCaseModel, EventDiagnosisModel, UserModel, AuditModel, ProductModel, UnitModel, ProductTypeModel, AdministrationRouteModel, EventTreatmentModel, HealthProgramModel, ExitModel
+from src.core.models import AnimalModel, EventModel, EventObservationModel, HealthCaseModel, EventDiagnosisModel, UserModel, AuditModel, ProductModel, UnitModel, ProductTypeModel, AdministrationRouteModel, EventTreatmentModel, HealthProgramModel, ExitModel, CaseFollowupModel
 from src.core.errors import ApplicationError
 
 class SQLHealthRepository:
@@ -100,7 +100,8 @@ class SQLHealthRepository:
             if new.get('status') not in ('open','under_treatment','closed'):
                 continue
             activity.append(dict(date=audit.date.replace(tzinfo=timezone.utc).isoformat(), recorded_by=self.user_name(user), action=audit.action, previous_status=(audit.old_values or {}).get('status'), status=new['status'], closed_date=new.get('closed_date')))
-        return dict(case=self.case_response(case, self.animal(case.animal_id)), activity=activity, diagnoses=self.diagnoses(case_id=case_id), treatments=self.treatments(case_id=case_id))
+        from .followups import SQLFollowupRepository
+        return dict(followups=SQLFollowupRepository(self.db).followups(case_id=case_id), case=self.case_response(case, self.animal(case.animal_id)), activity=activity, diagnoses=self.diagnoses(case_id=case_id), treatments=self.treatments(case_id=case_id))
 
     def change_status(self, case_id, data, actor):
         case = self.case(case_id, True)
@@ -114,6 +115,8 @@ class SQLHealthRepository:
             raise ApplicationError('Closed date is before a diagnosis', 422)
         if data.closed_date and self.db.scalar(select(EventTreatmentModel.event_id).where(EventTreatmentModel.health_case_id == case_id, EventTreatmentModel.end_date > data.closed_date + timedelta(days=1)).limit(1)):
             raise ApplicationError('Closed date is before treatment ends', 422)
+        if data.closed_date and self.db.scalar(select(CaseFollowupModel.id).where(CaseFollowupModel.health_case_id == case_id, CaseFollowupModel.date > data.closed_date).limit(1)):
+            raise ApplicationError('Closed date is before a followup', 422)
         previous = self.snapshot(case)
         case.status, case.closed_date = data.status, data.closed_date
         self.db.add(AuditModel(user_id=actor.id, table='health_cases', record_id=case.id, action='UPDATE', old_values=previous, new_values=self.snapshot(case)))
@@ -124,7 +127,8 @@ class SQLHealthRepository:
         animal = self.animal(animal_id)
         observations = self.db.execute(self.observation_query().where(EventModel.animal_id == animal_id).order_by(EventModel.date.desc(), EventModel.created_at.desc(), EventModel.id))
         cases = self.db.scalars(select(HealthCaseModel).where(HealthCaseModel.animal_id == animal_id).order_by(HealthCaseModel.start_date.desc(), HealthCaseModel.id))
-        return dict(animal=self.summary(animal), observations=[self.observation_response(row) for row in observations], cases=[self.case_response(c,animal) for c in cases], diagnoses=self.diagnoses(animal_id=animal_id), treatments=self.treatments(animal_id=animal_id))
+        from .followups import SQLFollowupRepository
+        return dict(followups=SQLFollowupRepository(self.db).followups(animal_id=animal_id), animal=self.summary(animal), observations=[self.observation_response(row) for row in observations], cases=[self.case_response(c,animal) for c in cases], diagnoses=self.diagnoses(animal_id=animal_id), treatments=self.treatments(animal_id=animal_id))
 
 
     def diagnosis_response(self, event, diagnosis, animal, user):
@@ -229,9 +233,9 @@ class SQLHealthRepository:
             raise ApplicationError('Treatment catalog entry not found',422)
         event=EventModel(animal_id=animal.id,event_type_id=3,date=datetime.combine(data.start_date,time.min),user_id=actor.id,role_id=actor.role.id)
         self.db.add(event);self.db.flush()
-        treatment=EventTreatmentModel(event_id=event.id,event_type_id=3,health_case_id=case.id,**data.model_dump(mode='python',exclude={'product_id'}),product_id=str(data.product_id))
+        treatment=EventTreatmentModel(event_id=event.id,event_type_id=3,withdrawal_days=product.withdrawal_days,health_case_id=case.id,**data.model_dump(mode='python',exclude={'product_id'}),product_id=str(data.product_id))
         self.db.add(treatment)
-        self.db.add(AuditModel(user_id=actor.id,table='events',record_id=event.id,action='INSERT',new_values=dict(animal_id=animal.id,event_type_id=3,health_case_id=case.id,role_id=actor.role.id,**data.model_dump(mode='json'))))
+        self.db.add(AuditModel(user_id=actor.id,table='events',record_id=event.id,action='INSERT',new_values=dict(withdrawal_days=product.withdrawal_days,animal_id=animal.id,event_type_id=3,health_case_id=case.id,role_id=actor.role.id,**data.model_dump(mode='json'))))
         if case.status=='open':
             previous=self.snapshot(case);case.status='under_treatment'
             self.db.add(AuditModel(user_id=actor.id,table='health_cases',record_id=case.id,action='UPDATE',old_values=previous,new_values=self.snapshot(case)))

@@ -1,8 +1,11 @@
+from src.core.models import FeedingModel
 from src.core.herd import exit_state, has_exited
+from src.core.locations import current_location
 from datetime import date, datetime
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, exists
+from sqlalchemy.orm import aliased
 from src.core.errors import ApplicationError
-from src.core.models import AnimalBreedModel, AnimalModel, AuditModel, BreedModel, GroupAnimalModel, EventModel, HealthCaseModel, BirthOffspringModel, EventMatingModel
+from src.core.models import AnimalBreedModel, AnimalModel, AuditModel, BreedModel, GroupAnimalModel, EventModel, HealthCaseModel, BirthOffspringModel, EventMatingModel, AnimalDecisionModel
 from src.features.animals.domain.dto import AnimalPage, AnimalResponse, BreedResponse, BreedShareResponse, ParentResponse
 
 
@@ -28,14 +31,52 @@ class SQLAnimalRepository:
             **{key: getattr(row, key) for key in ('id', 'name', 'siniiga', 'sex', 'birth_date',
                'origin', 'mother_id', 'father_id', 'is_breeder', 'created_at')},
             breeds=[BreedShareResponse(breed_id=s.breed_id, name=s.breed.name, percentage=s.percentage) for s in shares],
-            status=status, exit_date=exit_date,
+            status=status, exit_date=exit_date, current_location=current_location(self.session, row.id),
             mother=parent(row.mother_id), father=parent(row.father_id),
             purity=('pure' if len(shares) == 1 and shares[0].percentage == 100 else 'crossbred') if shares else None)
 
     def get(self, animal_id):
         return self._response(self._row(animal_id))
 
-    def list(self, q, sex, offset, limit, exclude_id=None, active=None):
+    def reproductive_partners(self, animal_id):
+        replacement = aliased(EventModel)
+        pairs = self.session.execute(select(EventModel.animal_id, EventMatingModel.male_id).join(
+            EventMatingModel, EventMatingModel.event_id == EventModel.id).where(
+            or_(EventModel.animal_id == animal_id, EventMatingModel.male_id == animal_id),
+            ~exists(select(replacement.id).where(replacement.replaced_event_id == EventModel.id))))
+        partners = {male_id if female_id == animal_id else female_id for female_id, male_id in pairs}
+        # Shared registered offspring also identify a pair when no mating was captured.
+        for mother_id, father_id in self.session.execute(select(AnimalModel.mother_id,
+                AnimalModel.father_id).where(or_(AnimalModel.mother_id == animal_id,
+                                                AnimalModel.father_id == animal_id))):
+            partner_id = father_id if mother_id == animal_id else mother_id
+            if partner_id:
+                partners.add(partner_id)
+        return partners
+
+    def excluded_parents(self, animal_id):
+        animal = self._row(animal_id)
+        # Traverse both parental links across the whole recorded family, not a page.
+        children = {}
+        for child_id, mother_id, father_id in self.session.execute(
+                select(AnimalModel.id, AnimalModel.mother_id, AnimalModel.father_id)):
+            for parent_id in (mother_id, father_id):
+                if parent_id:
+                    children.setdefault(parent_id, set()).add(child_id)
+        excluded, pending = set(), [animal_id]
+        while pending:
+            current = pending.pop()
+            if current in excluded:
+                continue
+            excluded.add(current)
+            pending.extend(children.get(current, ()))
+        # Preserve actual parent links already recorded, including historical related matings.
+        # Descendants/self remain excluded even if legacy data contains a cycle.
+        known_parents = {animal.mother_id, animal.father_id} - {None}
+        excluded.update(self.reproductive_partners(animal_id) - known_parents)
+        return excluded
+
+    def list(self, q, sex, offset, limit, exclude_id=None, active=None, parent_of=None):
         query = select(AnimalModel)
         if q:
             query = query.where(or_(AnimalModel.name.icontains(q, autoescape=True),
@@ -46,10 +87,13 @@ class SQLAnimalRepository:
             query = query.where(~has_exited(AnimalModel.id, date.today()) if active else has_exited(AnimalModel.id, date.today()))
         if exclude_id:
             query = query.where(AnimalModel.id != exclude_id)
+        excluded = self.excluded_parents(parent_of) if parent_of else set()
+        if excluded:
+            query = query.where(AnimalModel.id.not_in(excluded))
         total = self.session.scalar(select(func.count()).select_from(query.subquery()))
         rows = self.session.scalars(query.order_by(AnimalModel.created_at.desc(), AnimalModel.id)
                                     .offset(offset).limit(limit)).all()
-        return AnimalPage(items=[self._response(row) for row in rows], total=total, offset=offset, limit=limit)
+        return AnimalPage(items=[self._response(row) for row in rows], total=total, offset=offset, limit=limit, excluded_parent_ids=sorted(excluded))
 
     def breeds(self):
         return [BreedResponse(id=b.id, name=b.name) for b in self.session.scalars(
@@ -123,6 +167,13 @@ class SQLAnimalRepository:
                 ancestor = family.get(current)
                 if ancestor:
                     pending.extend(p for p in (ancestor.mother_id, ancestor.father_id) if p)
+        if animal_id and data.birth_date and self.session.scalar(select(EventModel.id).where(EventModel.animal_id==animal_id,
+                EventModel.location_id.is_not(None), EventModel.date<datetime.combine(data.birth_date, datetime.min.time())).limit(1).with_for_update()):
+            raise ApplicationError('Birth date conflicts with location history',422)
+        if animal_id and data.birth_date and self.session.scalar(select(AnimalDecisionModel.id).where(AnimalDecisionModel.animal_id == animal_id, AnimalDecisionModel.date < data.birth_date).limit(1).with_for_update()):
+            raise ApplicationError('Birth date conflicts with decision history', 422)
+        if animal_id and data.birth_date and self.session.scalar(select(FeedingModel.id).where(FeedingModel.animal_id==animal_id,FeedingModel.date<data.birth_date).limit(1).with_for_update()):
+            raise ApplicationError('Birth date conflicts with feeding history',422)
         if animal_id and data.birth_date and self.session.scalar(select(GroupAnimalModel.animal_id).where(
             GroupAnimalModel.animal_id == animal_id, GroupAnimalModel.start_date < data.birth_date).limit(1).with_for_update()):
             raise ApplicationError('Birth date conflicts with group history', 422)

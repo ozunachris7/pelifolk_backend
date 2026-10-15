@@ -1,5 +1,6 @@
 from src.core.herd import has_exited, effective_exit_query
 from src.core.models import EventModel
+from src.core.locations import latest_location_event_id
 from datetime import date
 from sqlalchemy import func, or_, select
 from src.core.errors import ApplicationError
@@ -52,6 +53,9 @@ class SQLOrganizationRepository:
         if row is None:
             raise ApplicationError('Location not found', 404)
         before = self.location_response(row).model_dump() if location_id else None
+        if location_id and not data.active and self.session.scalar(select(AnimalModel.id).join(EventModel, EventModel.id == latest_location_event_id()).where(
+            EventModel.location_id == location_id, ~has_exited(AnimalModel.id, date.today())).limit(1)):
+            raise ApplicationError('Location has assigned animals', 409)
         kind = self.session.get(LocationTypeModel, data.location_type_id)
         if kind is None:
             raise ApplicationError('Location type not found', 422)

@@ -1,5 +1,8 @@
 # Pelifolk backend
 
+> Estado actual y lista de pendientes: [docs/ESTADO_Y_PENDIENTES.md](docs/ESTADO_Y_PENDIENTES.md). Algunas notas de fases anteriores de este README describen limitaciones ya resueltas; consultar el inventario actualizado antes de planificar.
+
+
 API en Python y FastAPI. Conserva la estructura por features: domain, application e infrastructure; auth también utiliza controllers. `core` contiene configuración, conexión, seguridad y modelos compartidos. La implementación inicial cubre auth, users y roles.
 
 ## Instalación en PowerShell
@@ -245,3 +248,245 @@ En **Proveedores**, crear o editar nombre y contacto y activar o desactivar. Des
 - `GET /api/v1/finance/categories/{kind}`, `POST`, `PUT /{id}` y `DELETE /{id}`: `kind` admite `expense` o `income`; el cuerpo de creación/edición incluye `name`.
 
 Los importes usan `Decimal` y `DECIMAL(12,2)`: se rechazan más de dos decimales, valores no finitos y fechas futuras. Los gastos deben ser positivos; los ingresos admiten cero según el esquema existente. Una venta solo puede tener un ingreso y este no puede ser anterior a su salida; muertes y otras salidas no se aceptan como ventas. Registrar una salida por venta conserva la separación entre el movimiento del hato y el cobro: el ingreso se registra después, con su importe y fecha. Los cambios económicos y de catálogos se auditan en la misma transacción. La consulta de Economía no requiere permisos de animales ni de salidas. El balance corresponde a movimientos registrados; aún no distribuye costos por animal o lote.
+
+## Alimentación
+
+La migración `0012_feeding` agrega los permisos `feeding:read` y `feeding:write` al dueño y administrador y unidades kg, lb, paca y saco. Se aplica al iniciar la API; volver a iniciar sesión actualiza el menú. Reutiliza `feeds`, `feed_prices` y `feedings` sin modificar migraciones anteriores.
+
+En **Alimentación → Alimentos y precios**, agregar un alimento con su unidad, precio inicial en MXN y fecha de vigencia en la misma ventana. El alimento y su precio se guardan juntos; los cambios posteriores se agregan desde Precios. Se admiten precios futuros; cada fecha tiene un único precio. La unidad no puede cambiar después de registrar precios o consumos. Los precios se agregan al historial, sin editar ni borrar los anteriores.
+
+En **Consumos → Registrar consumo**, elegir alimento, animal o lote, fecha y cantidad. El costo usa el último precio vigente en esa fecha, con redondeo a centavos. El lote debe tener miembros en esa fecha; la cantidad corresponde al lote completo. No se admiten fechas futuras, consumos individuales anteriores al nacimiento ni posteriores a la salida. Un precio retroactivo recalcula los costos derivados del período correspondiente. No se crea automáticamente un gasto en Economía.
+
+El historial permite buscar, filtrar fechas y consultar un animal o lote desde cada fila. El costo total incluye todos los registros filtrados, no solo la página visible. Los registros antiguos sin precio muestran costo desconocido y no se incluyen como cero en el total.
+
+- `GET /api/v1/feeding/units`: unidades disponibles.
+- `GET/POST /api/v1/feeding/feeds` y `PUT /api/v1/feeding/feeds/{id}`: catálogo, con `name` y `unit_id`.
+- `GET/POST /api/v1/feeding/feeds/{id}/prices`: precios; creación con `effective_from` y `unit_cost` (hasta cuatro decimales).
+- `GET /api/v1/feeding/target-options?kind=animal&q=`: destinos; también admite `kind=group`.
+- `GET /api/v1/feeding/consumptions`: filtros `q`, `animal_id`, `group_id`, `date_from`, `date_to`, `offset` y `limit`.
+- `POST /api/v1/feeding/consumptions`: `feed_id`, `date`, `quantity` (hasta dos decimales) y exactamente uno de `animal_id` o `group_id`.
+
+## Resumen del rancho
+
+`GET /api/v1/dashboard/summary` requiere iniciar sesión y devuelve únicamente las áreas autorizadas por los permisos de lectura existentes; las demás son `null`. No requiere una migración nueva. **Resumen** permite actualizar las cifras y abrir los módulos correspondientes.
+
+El hato muestra animales activos, hembras, machos y bajas. Sanidad conserva los casos abiertos o en tratamiento y muestra hasta cinco avisos prioritarios de programas activos con productos activos; el total cuenta combinaciones de animal y programa, incluyendo fechas pendientes y falta de fecha de nacimiento. Reproducción cuenta hembras activas cuyo último diagnóstico o parto efectivo corresponde a un diagnóstico gestante; un parto posterior o un nuevo diagnóstico vacío deja de contarlas. No se estiman fechas de parto.
+
+Economía y alimentación usan desde el primer día del mes actual hasta hoy. El balance usa movimientos económicos registrados; el costo alimenticio se muestra por separado y no se vuelve a restar del balance. Los consumos sin precio se señalan y se excluyen del costo conocido. La actividad lista los últimos ocho eventos efectivos por fecha, solo de los módulos autorizados, con enlaces a esos módulos. Las cifras sanitarias y del hato no se restringen al mes. Las fechas siguen el criterio de fecha actual de la API, usado por los demás módulos.
+
+## Reporte de animales
+
+**Reportes** requiere `animals:read`, igual que el catálogo de animales. Incluye búsqueda por nombre/SINIIGA, estado (activos por defecto, bajas o todos), sexo, raza y lote actual. Una cruza aparece al filtrar cualquiera de sus razas. El filtro por lote considera la pertenencia vigente hoy y excluye animales con salida; no consulta pertenencias históricas. La tabla muestra identificación, nacimiento, edad en meses completos (presentada como años y meses), razas con porcentajes, lote y tipo/fecha de salida. Los totales por sexo corresponden a todos los resultados filtrados, no solo a la página.
+
+- `GET /api/v1/reports/animals/options`: razas y lotes para los filtros.
+- `GET /api/v1/reports/animals?q=&status=active&sex=&breed_id=&group_id=&offset=0&limit=25`: reporte paginado (máximo 100); omitir filtros vacíos.
+- `GET /api/v1/reports/animals/export`: mismos filtros, devuelve `.xlsx` con todos los resultados, fecha de consulta, filtros y total; no recibe paginación.
+
+**Aplicar filtros** actualiza la consulta y **Descargar Excel** usa esos filtros aplicados, aunque haya cambios pendientes en el formulario. El archivo contiene fechas y edades como valores nativos de Excel, encabezados y autofiltro; los nombres e identificadores se guardan como texto. Las edades sin nacimiento quedan desconocidas. No requiere migración. Instalar las dependencias con `python -m pip install -r requirements.txt` incluye `openpyxl`, usado para generar el archivo.
+
+## Reporte de sanidad
+
+En **Reportes → Sanidad**, consultar **Casos** o **Programas** y descargar cada vista en Excel. El menú Reportes aparece con `animals:read` o `health:read`; cada pestaña y sus endpoints exigen el permiso de su módulo. Los usuarios con solo `health:read` abren Sanidad directamente. No requiere migración ni permisos nuevos.
+
+- `GET /api/v1/reports/health/options?animal_q=`: hasta 100 animales por búsqueda (incluye bajas para consultar sus casos históricos) y programas activos con productos activos.
+- `GET /api/v1/reports/health?kind=cases&status=all&q=&animal_id=&date_from=&date_to=&offset=0&limit=25`: casos con estado `open`, `under_treatment`, `closed` o `all`. Las fechas filtran **inicio del caso**, con extremos inclusivos; búsqueda por animal, SINIIGA o motivo.
+- `GET /api/v1/reports/health?kind=schedule&status=attention&program_id=`: avisos derivados de los programas activos para animales que permanecen en el hato. Estados `overdue`, `due`, `upcoming`, `scheduled`, `missing_birth_date`, `attention` o `all`; búsqueda por animal/SINIIGA, filtro por animal, programa y fechas de **próxima aplicación**. Un rango de fechas excluye avisos sin fecha. `attention` incluye todos salvo `scheduled`; los avisos son combinaciones de animal y programa, no tratamientos clínicos pendientes.
+- `GET /api/v1/reports/health/export`: los mismos filtros, sin paginación; devuelve `.xlsx` con fecha, filtros, total, encabezados y autofiltro. Casos incluye motivo, estado, inicio, cierre y observaciones. Programas incluye producto, última/próxima aplicación y días restantes.
+
+Los totales por estado corresponden a todos los resultados filtrados. Cambiar entre Casos y Programas limpia los filtros incompatibles. **Aplicar filtros** confirma la consulta y el Excel usa los filtros aplicados. La búsqueda de opciones conserva el animal seleccionado aunque no coincida con la nueva búsqueda. Los textos se guardan como celdas de texto, sin interpretar fórmulas. La fecha actual sigue el criterio de los demás módulos de la API.
+
+## Reporte de reproducción
+
+En **Reportes → Reproducción**, consultar **Montas**, **Diagnósticos de gestación** y **Partos y crías**. Requiere `breeding:read`; los usuarios con solo ese permiso pueden abrir Reportes y ven únicamente Reproducción. Se reutilizan tablas y permisos existentes, sin migraciones nuevas.
+
+- `GET /api/v1/reports/breeding/options?animal_q=`: hasta 100 animales por búsqueda, incluidos animales con salida para consultar registros históricos.
+- `GET /api/v1/reports/breeding?kind=mating&q=&animal_id=&date_from=&date_to=&offset=0&limit=25`: `kind` admite `mating`, `pregnancy` y `birth`; fechas inclusivas por fecha del evento, paginación máxima 100. La búsqueda y el animal seleccionado incluyen la hembra, el macho de una monta o una cría vinculada al parto. Solo se muestran eventos efectivos, excluyendo los reemplazados.
+- En `kind=pregnancy`, `result` opcional admite `pregnant`, `not_pregnant`, `uncertain`; los totales cuentan diagnósticos del período, no hembras gestantes actuales.
+- En `kind=birth`, los totales de crías nacidas vivas/sin vida corresponden a todos los partos filtrados. **Ver crías** muestra identificación, sexo, condición al nacer y peso. Filtrar por una cría conserva el parto completo y todas sus crías. La condición al nacer no representa su estado actual.
+- `GET /api/v1/reports/breeding/export`: mismos filtros, todos los resultados sin paginación. Exporta `.xlsx` con fecha, filtros, totales y datos propios de cada tipo de evento. El Excel de partos incluye una segunda hoja **Crías** con el ID del parto para relacionar ambas hojas y pesos numéricos.
+
+**Aplicar filtros** confirma la consulta; la descarga usa los filtros aplicados. Cambiar de tipo de evento limpia los filtros incompatibles. Las fechas y pesos se guardan como valores nativos y los nombres, notas e identificadores como texto. El reporte conserva registros históricos después de una salida y no calcula fechas estimadas de parto.
+
+## Reporte de economía
+
+En **Reportes → Economía**, consultar **Gastos** e **Ingresos**, con permiso `finance:read`. Usuarios con solo ese permiso pueden abrir el reporte económico sin acceso a animales, sanidad o reproducción. No requiere migraciones nuevas.
+
+La vista abre con el mes actual. Filtrar por fechas inclusivas, categoría, búsqueda y proveedor (solo gastos); los proveedores inactivos siguen disponibles para consultar movimientos históricos. Vaciar ambas fechas consulta todo el historial. Cambiar entre ingresos y gastos conserva fechas y búsqueda y limpia categoría y proveedor. **Aplicar filtros** confirma la consulta y la descarga usa esos filtros aplicados.
+
+El **balance del período** usa todos los movimientos del rango de fechas, sin limitarlo a búsqueda, categoría, proveedor o página. El **importe filtrado** suma todos los resultados de la lista, no solo los visibles en la página. Alimentación no se resta automáticamente; el balance considera gastos registrados en Economía. El Excel distingue estos dos ámbitos.
+
+- `GET /api/v1/reports/finance/options?supplier_q=`: categorías de ambos tipos y hasta 100 proveedores por búsqueda, activos o inactivos.
+- `GET /api/v1/reports/finance?kind=expense&q=&category_id=&supplier_id=&date_from=&date_to=&offset=0&limit=25`: `kind` admite `expense` o `income`; omitir filtros vacíos. Devuelve lista, importe filtrado, conteo y balance del período. Máximo 100 por página.
+- `GET /api/v1/reports/finance/export`: mismos filtros, todos los movimientos sin paginación; Excel con hoja **Resumen** (fechas, filtros, ingresos/gastos/balance e importe filtrado) y hoja **Gastos** o **Ingresos**. Incluye proveedor o identificación del animal de la venta vinculada, descripción y total.
+
+Los importes de la API se serializan como decimales en cadenas y el Excel guarda importes y fechas como valores numéricos/nativos. Nombres, identificadores y descripciones se guardan como texto, sin interpretar fórmulas. Las categorías iniciales se traducen igual que en Economía; los nombres personalizados se conservan.
+
+## Reporte de alimentación
+
+En **Reportes → Alimentación**, consultar consumos por alimento, animal o lote con `feeding:read`. Abre con el mes actual; vaciar ambas fechas consulta todo el historial. Las fechas son inclusivas. Las opciones incluyen animales con salida y lotes inactivos para consultar consumos históricos. Cambiar de tipo de destino limpia la selección anterior. No requiere migración.
+
+- `GET /api/v1/reports/feeding/options?feed_q=&target_q=&target_kind=animal`: hasta 100 alimentos y destinos por búsqueda. `target_kind` admite `animal` o `group`.
+- `GET /api/v1/reports/feeding?q=&feed_id=&target_kind=all&target_id=&date_from=&date_to=&offset=0&limit=25`: búsqueda por alimento, animal/SINIIGA o lote; destino `all`, `animal` o `group`. Un `target_id` requiere tipo específico. Máximo 100 por página; omitir filtros vacíos.
+- `GET /api/v1/reports/feeding/export`: mismos filtros sin paginación; Excel con hojas **Resumen** y **Consumos**, fechas nativas, cantidades/precios/costos numéricos y textos sin interpretar fórmulas.
+
+El costo usa el precio vigente en la fecha de cada consumo y se redondea a centavos por registro. Los consumos sin precio se señalan y quedan fuera del **costo conocido**, aunque su cantidad sí se incluye. Las cantidades se suman por unidad, sin convertir kg, lb, sacos o pacas. Un consumo de lote pertenece al lote completo y no se distribuye por animal. Los totales corresponden a todos los resultados filtrados, no solo a la página. Agregar un precio retroactivo puede actualizar estos costos calculados; el reporte no registra gastos automáticamente en Economía.
+
+**Aplicar filtros** confirma la consulta y **Descargar Excel** usa los filtros aplicados, aunque haya cambios pendientes en el formulario.
+
+## Reporte de pesajes y crecimiento
+
+En **Reportes → Pesajes y crecimiento**, consultar mediciones por animal, nombre/SINIIGA y fechas inclusivas. Requiere `weights:read`; usuarios con solo ese permiso también acceden a Reportes. Abre con todo el historial e incluye animales con salida. No requiere migración.
+
+- `GET /api/v1/reports/weights/options?animal_q=`: hasta 100 animales por búsqueda, incluidos animales con salida.
+- `GET /api/v1/reports/weights?q=&animal_id=&date_from=&date_to=&offset=0&limit=25`: reporte paginado (máximo 100), con peso, fecha/peso anterior, días, cambio de peso y ganancia diaria. Omitir filtros vacíos.
+- `GET /api/v1/reports/weights/export`: mismos filtros, sin paginación; Excel con hojas **Resumen** y **Pesajes**. Guarda fechas nativas, pesos/cambios numéricos y nombres/notas como texto sin interpretar fórmulas.
+
+Solo se consideran eventos efectivos, excluyendo reemplazados. El pesaje anterior se calcula por animal **antes** de filtrar fechas: puede quedar fuera del período consultado. Cambio = peso actual − anterior; ganancia diaria = cambio / días, redondeada a tres decimales en kg/día. El primer pesaje queda sin comparación y no representa ganancia cero. Si dos registros históricos son del mismo día, no se calcula ganancia diaria entre ellos. Los valores negativos representan pérdidas.
+
+Los totales cuentan pesajes, animales distintos, intervalos comparables y pesajes con pérdida en todos los resultados filtrados, no solo en la página. No se suman cambios de peso entre animales. **Aplicar filtros** confirma la consulta y **Descargar Excel** usa los filtros aplicados.
+
+## Genealogía visual
+
+La vista **Genealogía** requiere `animals:read` y se abre desde el menú o desde **Animales → Genealogía**, en la fila o ficha de cada animal. Permite buscar por nombre/SINIIGA y elegir el animal. Las rutas del frontend son `/dashboard/genealogy` y `/dashboard/genealogy/:id`; compartir la segunda conserva el animal consultado.
+
+- `GET /api/v1/animals/{animal_id}/genealogy?offset=0&limit=12`: árbol con el animal consultado, sus padres y abuelos (dos generaciones de antepasados), más hijos directos paginados. Máximo 100 hijos por página. Los totales de hijos, hembras y machos corresponden a todos los hijos registrados, no solo a la página.
+
+Los vínculos se obtienen de `mother_id` y `father_id`, incluidos animales con salida. Los parentescos desconocidos quedan como **No registrado**; no se infieren desde montas. Un antepasado compartido permanece en ambas ramas, conservando su relación materna/paterna. La consulta tiene profundidad acotada y no modifica datos ni necesita migración. Las fechas y estados mostrados corresponden a la consulta actual.
+
+**Ficha** abre los datos del familiar (identificación, sexo, nacimiento, estado, origen, reproducción, padres y razas) en la modal con el scroll existente. **Explorar familia** centra el árbol en ese familiar y permite avanzar hacia otras generaciones o recorrer descendientes. La lista inferior muestra hijos directos; no es un conteo de todos los descendientes ni un indicador de fertilidad o supervivencia. Esta vista no calcula consanguinidad ni evalúa el valor genético de los reproductores.
+
+## Partos próximos
+
+En **Reproducción → Partos próximos**, consultar hembras activas cuyo último evento efectivo entre diagnóstico de gestación y parto sea un diagnóstico `pregnant`. Requiere `breeding:read`; no necesita permiso de animales, migración ni registros nuevos. La vista conserva acceso al historial reproductivo. **Ir a registrar parto**, visible con `breeding:write`, abre la pestaña Partos y crías; allí se selecciona la hembra y se registra el parto real.
+
+- `GET /api/v1/breeding/upcoming-births?q=&status=all&notice_days=14&offset=0&limit=25`: búsqueda por nombre/SINIIGA, aviso de 1 a 60 días, paginación máxima 100. Estados `all`, `past_estimate`, `due`, `upcoming`, `scheduled` y `missing_mating`. Totales y conteos corresponden a todos los resultados filtrados.
+
+La fecha estimada usa **monta vinculada al diagnóstico + 147 días**, una referencia promedio para ovinos ([Merck Veterinary Manual](https://www.merckvetmanual.com/management-and-nutrition/preventative-health-care-and-husbandry-of-sheep/breeding-parturition-and-common-lamb-diseases-of-sheep)). No confirma la fecha real ni diagnostica un retraso. Fecha estimada pasada significa que la referencia quedó atrás y no hay un parto posterior registrado. Hoy se muestra por separado; próximas incluye los siguientes `notice_days`, y las demás quedan Más adelante.
+
+No se estima desde la fecha de diagnóstico ni desde una monta sin vínculo explícito. Un diagnóstico sin monta vinculada, con monta reemplazada/inválida o anterior al último parto queda **Sin fecha estimada**, con el motivo visible. Se excluyen animales con salida y eventos reemplazados; un parto posterior o diagnóstico posterior de vacía/dudosa retira la hembra del listado. La misma ordenación que el resumen resuelve eventos del mismo día por fecha, creación e ID. Actualizar listado vuelve a calcular con los filtros aplicados y la fecha actual de la API; no envía notificaciones externas ni registra partos automáticamente.
+
+## Desempeño de reproductores
+
+En **Reproducción → Desempeño**, comparar hembras o machos con `breeding:read`, sin exigir permiso de animales. Incluye animales marcados como reproductores, con eventos efectivos de reproducción o con hijos directos registrados, aun si tienen cero resultados en el período. La vista abre con todo el historial, permite buscar por nombre/SINIIGA y filtrar estado actual y fechas. No requiere migración ni registros nuevos.
+
+- `GET /api/v1/breeding/performance?sex=female&q=&status=all&date_from=&date_to=&offset=0&limit=25`: sexo `female` o `male`; estado `all`, `active` o `exited`; fechas inclusivas. Máximo 100 por página. Devuelve métricas por animal y totales sobre todos los resultados filtrados.
+- `GET /api/v1/breeding/performance/{animal_id}/offspring?date_from=&date_to=&offset=0&limit=25`: hijos directos del período, condición/peso al nacer, estado actual y fecha de salida. Usa las fechas aplicadas a la comparación, no cambios pendientes. **Ver genealogía** aparece solo con `animals:read`.
+
+Montas y partos se filtran por fecha del evento; descendientes por nacimiento. Sin rango se incluyen descendientes sin fecha, pero un rango los excluye. Los padres se obtienen de las fichas; las crías creadas manualmente también cuentan como descendientes. La condición y peso al nacer solo se obtienen de un parto efectivo vinculado; los datos desconocidos quedan explícitos y no se convierten en cero.
+
+En hembras, **partos registrados** cuenta eventos efectivos y **crías por parto registrado** divide las crías de esos partos entre su número. No usa las crías capturadas fuera de partos en esa razón. En machos, **partos con descendencia** cuenta partos efectivos con crías que tienen ese padre; no demuestra fecundidad ni atribuye un padre a partir de una monta. Montas son registros de monta, no concepciones confirmadas.
+
+El peso promedio al nacimiento considera únicamente las crías con peso registrado (incluye nacidas sin vida) y muestra cuántas contribuyen al promedio. **Nacidos vivos**, **nacidos sin vida** y **condición desconocida** son resultados al nacimiento. **Muertes posteriores registradas** cuenta muerte/sacrificio actual de crías que nacieron vivas; el estado de las crías se consulta a la fecha actual, incluso si la salida ocurrió fuera del rango de nacimientos. Ventas, traspasos y otras salidas quedan separados: no prueban supervivencia. No se calcula una tasa de supervivencia/fertilidad ni una puntuación genética. Los descendientes son hijos directos, no todas las generaciones.
+
+## Asignación de gastos y costos por animal o lote
+
+En **Economía → Gastos**, usar **Asignar** o **Asignado** para consultar o repartir un gasto existente entre animales, lotes o casos sanitarios. Consultar requiere `finance:read`; guardar requiere `finance:write`. Un reparto no vacío debe sumar exactamente 100 %, sin repetir destinos; cada porcentaje admite hasta dos decimales. Quitar todos los destinos y guardar deja el gasto como general del rancho. La operación se confirma de forma atómica y conserva la asignación anterior si falla. Genera auditoría con el usuario y los valores anteriores/nuevos. Se reutiliza `expense_allocations` de la migración inicial, sin modificar migraciones aplicadas ni crear otra.
+
+- `GET /api/v1/finance/allocation-options?kind=animal&q=`: hasta 100 destinos por búsqueda. `kind` admite `animal`, `group`, `health_case`; incluye animales con salida, lotes inactivos y casos cerrados para asignaciones históricas. Casos se identifican por fecha y animal, sin exponer el detalle clínico.
+- `GET /api/v1/finance/expenses/{expense_id}/allocations`: gasto, destinos, porcentajes, importes asignados y saldo sin asignar.
+- `PUT /api/v1/finance/expenses/{expense_id}/allocations`: `{"allocations":[{"kind":"animal","target_id":"UUID","percentage":"100.00"}]}`. Reemplaza el reparto; `{"allocations":[]}` lo limpia. Máximo 100 destinos.
+- `GET /api/v1/finance/costs?kind=animal&target_id=UUID&date_from=&date_to=&offset=0&limit=25`: `kind` admite `animal` o `group`. Fechas inclusivas; omitir fechas vacías. Lista asignaciones paginadas (máximo 100), total asignado a ese destino y alimentación separada. El costo de alimentación solo se devuelve si el usuario también tiene `feeding:read`.
+
+El reparto distribuye centavos por mayores residuos, con desempate estable por destino, para que los importes asignados sumen exactamente el gasto cuando los porcentajes suman 100 %. Se calcula desde el monto actual del gasto: editar su importe actualiza automáticamente los importes derivados, conservando porcentajes. La asignación no crea ni duplica movimientos ni cambia el balance de Economía. La lista de gastos incluye `allocation_count` para distinguir Asignar/Asignado.
+
+En **Economía → Costos por animal o lote**, seleccionar un destino y consultar su período. Para un animal se suman asignaciones directas y las de sus casos sanitarios. Para un lote se suman solo sus propias asignaciones; no se distribuyen automáticamente a los miembros ni se suman las asignaciones individuales. Los gastos generales no atribuidos quedan fuera. Cada fila es una asignación: un mismo gasto puede aportar varias al animal, sin contar nuevamente su importe completo.
+
+Los consumos de alimentación se valoran con el precio vigente en su fecha y se presentan aparte de los gastos asignados. No se suman ambos importes: una compra de alimento registrada en Economía puede corresponder a esos mismos consumos. Los consumos sin precio conservan costo desconocido; se informa su conteo y se excluyen del costo conocido. El consumo del lote completo no se reparte entre animales. La vista muestra costos registrados/atribuidos; no calcula rentabilidad ni un costo total que incluya gastos generales no repartidos. **Ver asignación** permite inspeccionar o editar el reparto con los permisos correspondientes.
+
+## Ubicación actual e historial de traslados
+
+En **Ubicaciones → Animales y traslados**, consultar animales en el hato, con salida o todos, por nombre/SINIIGA y ubicación. Requiere `locations:read`, sin exigir permiso de animales. **Asignar ubicación** o **Trasladar** requiere `locations:write`; permite elegir un destino activo, fecha y motivo obligatorio. Conserva usuario, rol al registrar y auditoría. La ficha de Animales también muestra `current_location`.
+
+- `GET /api/v1/locations/animal-positions?q=&status=active&location_id=&offset=0&limit=25`: estado `active`, `exited` o `all`, paginación máxima 100. Para bajas devuelve ubicación actual nula y última ubicación conocida.
+- `GET /api/v1/locations/animals/{animal_id}/history?offset=0&limit=25`: registros vigentes con origen/destino derivados cronológicamente, fecha, motivo y responsable. La referencia anterior se conserva incluso al paginar.
+- `POST /api/v1/locations/movements`: `animal_id`, `location_id`, `date` (YYYY-MM-DD), `reason` (1–2000 caracteres). Fecha no futura ni anterior al nacimiento, posterior al último registro de ubicación. Se admite un registro por animal/día; no inserta traslados retroactivos entre registros existentes, no repite el destino actual y no traslada animales con salida.
+
+Se reutiliza `events.location_id`; la migración nueva **0013_location_movements** registra el tipo de evento 9 (`location_movement`). Se aplica al reiniciar la API con las migraciones de inicio activas. No modifica migraciones anteriores ni crea tablas nuevas. La ubicación se deriva del último evento efectivo con ubicación, incluidos registros previos de otros tipos; se ignoran reemplazados. Los registros de otros tipos se distinguen en el historial. La actividad del resumen incluye traslados solo con `locations:read`.
+
+La ubicación física y el lote son independientes. Un traslado no cambia la pertenencia al lote. Una ubicación con animales actualmente asignados no se desactiva hasta trasladarlos o registrar sus salidas. Los animales con salida conservan el historial; su última ubicación no significa que permanezcan allí. Cambiar el nacimiento no puede invalidar registros anteriores de ubicación, y una salida no puede quedar antes de un traslado ya registrado.
+
+### Retiro sanitario
+
+`0014_treatment_withdrawal.sql` agrega un periodo histórico nullable a los tratamientos; se aplica automáticamente al arrancar la API. No modifica migraciones anteriores ni rellena el historial con el catálogo actual. Cada tratamiento nuevo, de caso o programa, guarda los días de retiro del producto bajo bloqueo del producto.
+
+En **Sanidad → Retiro sanitario** se consultan los animales activos y sus tratamientos efectivos. Los días de retiro positivos se cuentan como días calendario completos posteriores al último día del tratamiento (`end_date` es exclusivo); la fecha estimada es `end_date + withdrawal_days`. Se toma la mayor fecha entre productos y se descartan eventos reemplazados. Un tratamiento en curso muestra una estimación basada en su duración registrada, no una confirmación de última dosis administrada. Cero días mantiene la fecha de fin del tratamiento; no significa autorización inmediata para consumo. Los registros antiguos sin periodo histórico y las fechas que exceden el calendario aparecen **por verificar**, aunque otro tratamiento tenga una fecha conocida.
+
+`GET /api/v1/health/withdrawals` admite búsqueda y paginación (permiso `health:read`); `GET /api/v1/health/animals/{id}/withdrawal` incluye el detalle. `GET /api/v1/exits/animals/{id}/withdrawal?date=YYYY-MM-DD` requiere `exits:read` y entrega solamente el resumen a la fecha de salida. El formulario de venta/sacrificio consulta ese resumen antes de guardar y avisa sobre retiros pendientes o datos por verificar. El backend calcula nuevamente el estado y lo conserva en la auditoría de la salida; el aviso no prohíbe registrar una venta. Permanecen las validaciones de fechas contra el historial.
+
+La estimación no certifica aptitud para consumo. El retiro depende de la etiqueta y del tratamiento indicado por el veterinario; su referencia es la última administración, que debe mantenerse actualizada en los registros. Referencia sobre registro de tratamientos y retiro: [FDA, Adequate Records Help Prevent Illegal Drug Residues](https://www.fda.gov/animal-veterinary/animal-health-literacy/adequate-records-help-prevent-illegal-drug-residues-and-ensure-food-safety).
+
+### Consulta de auditoría
+
+**Auditoría** en el menú muestra los cambios ya guardados por la aplicación, con paginación de 25 registros, búsqueda y filtros por módulo, acción, usuario y fechas. El detalle compara los campos modificados en columnas **Antes / Después**, distingue valores nulos de campos que no existían y permite consultar el historial del registro sin mezclar identificadores iguales de tablas distintas. Los nombres de usuarios y referencias vinculadas se resuelven con el catálogo actual; los valores guardados en las instantáneas conservan su contenido histórico. También se incluyen acciones propias, usuarios inactivos y registros sin usuario (sistema).
+
+La migración automática `0015_audit_permission.sql` concede `audit:read` al dueño y al administrador del sistema. Es un permiso global de lectura: permite consultar cambios de todos los módulos, incluidos usuarios y economía. Puede asignarse explícitamente a otros roles desde **Roles y permisos**, sujeto a las reglas existentes para conceder permisos. No existe permiso de escritura ni endpoints para modificar o borrar la auditoría. Después de aplicar la migración, iniciar sesión nuevamente actualiza los accesos del menú.
+
+Endpoints: `GET /api/v1/audit`, `GET /api/v1/audit/users` (busca hasta 50 usuarios con registros, configurable hasta 100) y `GET /api/v1/audit/{id}`. Todos requieren `audit:read`; consultar usuarios del historial no requiere `users:read`. El listado admite `q`, `module`, `action`, `user_id` (UUID o `system`), `record_id`, `table`, `offset`, `limit`, `date_from` y `date_before`. Los filtros de fecha deben incluir zona horaria: el primero es inclusivo y el segundo exclusivo. El frontend convierte las fechas locales elegidas a límites UTC y muestra las horas en el horario local.
+
+La API elimina claves de credenciales de los valores anteriores/nuevos, incluso dentro de objetos y listas de registros históricos; conserva solamente la marca `password_changed`, nunca contraseñas ni hashes. La lista no devuelve instantáneas completas. La pantalla refleja la auditoría existente, no añade captura de cambios hechos directamente por SQL ni convierte registros anteriores en un historial que no se guardó.
+
+### Seguimiento sanitario y revisiones clínicas
+
+La migración automática `0016_health_followups.sql` crea `health_case_followups` con autor, rol al registrar, fecha clínica, evolución, evaluación de los tratamientos del caso, notas y próxima revisión opcional. Los seguimientos se agregan al historial y no tienen endpoints de edición ni eliminación. Registrar recuperación no cierra automáticamente el caso: el cierre sigue siendo una decisión explícita y no puede quedar antes de un seguimiento existente.
+
+En **Sanidad → Casos y observaciones → Ver caso → Registrar evolución** se registra cómo está el animal y qué se acordó. Los seguimientos también aparecen en el historial sanitario del animal y generan auditoría en la misma transacción. La evaluación del resultado requiere un tratamiento efectivo registrado en ese caso cuya fecha de inicio no sea posterior a la evaluación; no se deduce automáticamente eficacia ni se sugieren dosis.
+
+**Sanidad → Revisiones clínicas** muestra casos sin cerrar de animales activos, con filtros por animal y revisiones vencidas/para hoy, próximas o todas las programadas. **Abrir caso** lleva directamente al caso para registrar la siguiente evaluación. La próxima revisión corresponde al seguimiento más reciente por fecha clínica y, en empates, fecha de creación e identificador. Agregar una nota atrasada conserva el historial sin reemplazar un plan clínico posterior. Dejar vacía la próxima revisión en el seguimiento más reciente retira el pendiente; cerrar el caso o registrar una salida lo excluye de la agenda, conservando los registros.
+
+`POST /api/v1/health/cases/{id}/followups` requiere `health:write`; `GET /api/v1/health/reviews?q=&state=attention|upcoming|all&offset=&limit=` requiere `health:read`. Los detalles del caso y del animal incluyen `followups`. No se admiten seguimientos futuros, anteriores al inicio del caso, posteriores a una salida ni en casos cerrados. La próxima revisión no puede quedar antes del seguimiento, pero se permite registrar una revisión histórica ya vencida. Una salida no puede quedar antes de un seguimiento registrado. No cambian los permisos existentes ni se modifican migraciones anteriores.
+
+### Decisiones por animal
+
+La migración automática `0017_animal_decisions.sql` crea `animal_decisions`. En **Animales → Ficha → Decisiones e historial → Registrar decisión** se conserva la fecha de la decisión, tipo, motivo, usuario que la registra y rol al registrar. Tipos: conservar para reproducción, descartar para reproducción, separar del resto del hato, venta prevista, motivo de compra y otra decisión. El historial se consulta por tipo y páginas de 25 registros, ordenado por fecha clínica, creación e identificador. Para aclaraciones o cambios de criterio se añade una nueva decisión; no existen endpoints de edición o eliminación.
+
+Las decisiones documentan el motivo y no ejecutan por sí mismas un cambio operativo: el estado de reproductor se actualiza en **Editar animal**, los traslados y pertenencias en **Ubicaciones / Lotes**, y las ventas o bajas en **Salidas**. La captura lo explica al usuario para distinguir el criterio registrado de la acción realizada. El historial también permanece accesible desde la ficha de un animal dado de baja; permite agregar motivos históricos con fecha no posterior a su salida.
+
+`GET /api/v1/animals/{id}/decisions?kind=&offset=&limit=` requiere `animals:read`; `POST /api/v1/animals/{id}/decisions` requiere `animals:write`, con `date`, `kind` y `reason`. La API obtiene el autor y el rol de la sesión, registra auditoría en la misma transacción y valida que la fecha no sea futura, anterior al nacimiento ni posterior a una salida. Modificar el nacimiento o registrar una salida tampoco puede invalidar decisiones existentes. No se necesitan permisos nuevos ni se modifican migraciones anteriores.
+
+### Aviso de parentesco en montas
+
+La migración automática `0018_mating_kinship.sql` agrega `kinship_snapshot` nullable a `event_matings`. En **Reproducción → Montas → Registrar**, al seleccionar hembra y macho se compara la genealogía registrada hasta padres y abuelos. Se muestran relaciones directas con progenitores/abuelos, progenitores compartidos, abuelos compartidos y antepasados que son progenitores de uno y abuelos del otro. Un antepasado presente en distintas ramas conserva todos sus caminos; compartir un único progenitor conocido no se presenta automáticamente como hermanos de un solo progenitor cuando falta el otro.
+
+El aviso distingue **parentesco registrado**, **sin parentesco encontrado hasta abuelos** y **datos genealógicos incompletos**. Los datos faltantes y las inconsistencias (ciclos o sexos incompatibles en las ramas) aparecen explícitamente; no se inventa una genealogía ni un coeficiente genético y no se descartan parentescos más lejanos. La consulta no requiere `animals:read`: usa `breeding:read`, como el resto de la captura reproductiva.
+
+`GET /api/v1/breeding/kinship?animal_id=UUID&male_id=UUID` devuelve el aviso y sus antepasados/caminos. El frontend consulta al cambiar la pareja y espera una respuesta correcta antes de permitir guardar; muestra errores sin presentarlos como ausencia de parentesco. El parentesco encontrado es un aviso y no impide registrar una monta que efectivamente ocurrió. El backend calcula nuevamente la comprobación al guardar, bajo bloqueo de los animales consultados, y la conserva en la monta y en su auditoría. El cliente no puede enviar una comprobación inventada.
+
+El detalle y el historial de la monta muestran la comprobación guardada, aunque luego cambien los padres o nombres de los antepasados. Las montas anteriores sin comprobación conservada muestran esa ausencia; no se reconstruye retrospectivamente un resultado. Se mantienen todas las validaciones existentes de sexos, nacimiento y permanencia en el hato, y no cambian los permisos ni migraciones anteriores.
+
+### Opciones válidas al seleccionar padres
+
+La edición de animales consulta `GET /api/v1/animals?parent_of=UUID&sex=female|male&q=&limit=100`. La API excluye al animal y a todos sus descendientes por cualquiera de las dos líneas parentales, incluso crías/nietos fuera de la primera página o con fechas de nacimiento desconocidas. Filtra antes de contar y paginar; un descendiente sigue disponible para animales que no sean sus ascendientes. El parámetro genérico `exclude_id` conserva su comportamiento anterior.
+
+La respuesta incluye `excluded_parent_ids` para impedir que el selector vuelva a introducir una selección anterior que ya sea descendiente. Si la genealogía cambia mientras se edita, se limpia esa selección y se avisa. La validación existente al guardar sigue comprobando ciclos, sexos y fechas bajo bloqueo. Este ajuste no necesita migración ni modifica parentescos guardados.
+
+El filtro de `parent_of` también excluye parejas reproductivas conocidas mediante montas efectivas (sin eventos reemplazados) o crías con ambos progenitores registrados. Se aplica en ambas direcciones: la hembra no se propone como madre del macho con el que se reprodujo, ni el macho como padre de esa hembra. La pareja sigue disponible para otros animales. Se conservan los padres que ya están guardados cuando existe una monta histórica entre familiares; este filtro ajusta opciones para asignaciones nuevas y no borra ni reescribe la genealogía. Las validaciones de ciclos, sexos y fechas al guardar permanecen vigentes.
+
+### Registro de destete
+
+La migración automática `0019_weanings.sql` crea `event_weanings`, vinculado al pesaje del destete y con un único registro por animal. En **Manejo → Destetes** se registra fecha, peso en kg y observaciones. Se conservan la madre y la fecha de nacimiento registradas al capturar el destete, además del autor y su rol. La edad se calcula solo con ese nacimiento guardado; si falta, aparece desconocida. Corregir después la madre o el nacimiento del animal no reescribe estos datos históricos.
+
+El peso se integra en **Manejo → Pesajes**, en la curva de crecimiento y en los reportes de pesos existentes. Se marca como **Destete** en la lista y el historial de pesajes. Si existe un pesaje efectivo ese día con el mismo valor, se reutiliza sin modificar su autor ni sus notas; las notas y el autor del destete se guardan separadamente. Si el peso difiere, se pide consultar el historial y usar el valor registrado. **Consultar pesajes** en la captura conserva los campos al volver al formulario.
+
+`GET /api/v1/weanings`, `GET /api/v1/weanings/animal-options` y `GET /api/v1/weanings/animals/{id}` requieren `weights:read`. El listado tiene búsqueda y paginación; las opciones muestran animales activos sin destete registrado. `POST /api/v1/weanings` requiere `weights:write` y recibe `animal_id`, `date`, `weight_kg` y `notes` opcionales. Se rechazan fechas futuras, fechas no posteriores al nacimiento conocido, registros posteriores a una salida y destetes duplicados. No se prescribe una edad de destete ni se inventan fechas o madres. La captura genera auditoría en la misma transacción. El destete es inmutable en esta versión; no tiene endpoints de edición o eliminación.
+
+### Reporte de destetes
+
+En **Reportes → Destetes** se consulta y exporta a Excel la fecha, animal/SINIIGA, madre al registrar, peso, edad al destete, autor y observaciones. Los filtros por nombre/SINIIGA, animal y fechas se aplican tanto al listado paginado como al Excel completo. Las fechas Desde/Hasta son inclusivas; sin fechas se consulta todo el historial, incluidos animales que posteriormente salieron del hato.
+
+Endpoints `GET /api/v1/reports/weanings`, `/reports/weanings/options` y `/reports/weanings/export`, con permiso `weights:read`. Las opciones incluyen animales con destete registrado, aunque estén dados de baja. La edad utiliza el nacimiento guardado al registrar el destete; si falta, aparece desconocida y su celda en Excel permanece vacía. La madre corresponde al vínculo guardado en ese momento, con su identificación actual. Las notas y el autor corresponden al destete incluso cuando se reutilizó un pesaje previo. El Excel conserva fechas y números como tales y nombres/observaciones como texto, sin ejecutar fórmulas. No requiere migración ni permisos nuevos.
+
+### Destetes en desempeño de reproductores
+
+**Reproducción → Desempeño** incluye `weaned_offspring` (crías con destete efectivo registrado) y `average_weaning_weight_kg` (promedio observado, redondeado a dos decimales). **Ver crías** muestra `weaning`: fecha, peso y edad histórica al registrar; es `null` cuando no existe destete efectivo. No se utilizan pesajes ordinarios o posteriores para inferir el destete, ni se convierten edades desconocidas en cero. Los pesajes reemplazados quedan fuera del cálculo.
+
+Se mantienen el permiso `breeding:read` y los filtros existentes: las fechas seleccionan descendientes por su nacimiento, y se consideran sus destetes efectivos hasta la consulta, aunque ocurran fuera del período o la cría haya salido del hato. Sin fechas también se incluyen descendientes sin nacimiento conocido. La agrupación usa la madre o el padre de la genealogía actual; los datos históricos del registro de destete no se reescriben. El promedio muestra su número de observaciones y no ajusta los pesos a una edad común. No requiere migración ni permisos nuevos.
+
+### Historial integral del animal
+
+En **Animales → Ver ficha → Historial completo → Ver historial**, consultar los registros ordenados del más reciente al más antiguo, con filtros por área y fechas y páginas de 25 registros. `GET /api/v1/animals/{id}/timeline` requiere `animals:read`; cada fuente se consulta y cuenta solo si el usuario tiene el permiso de lectura de su módulo. Filtrar expresamente un área no autorizada devuelve 403. Admite `module`, `date_from`, `date_to`, `offset` y `limit` (máximo 100), con fechas inclusivas. La consulta es de solo lectura y no requiere migración ni permisos nuevos.
+
+Incluye fecha de nacimiento guardada actualmente, alta en el sistema, decisiones, observaciones, casos/cambios de estado, diagnósticos, tratamientos, seguimientos, pesajes/destete, montas (también para el macho), gestación, partos/descendencia paterna, traslados, inicio/fin de pertenencia a lotes, alimentación individual y del lote durante esa pertenencia, gastos atribuidos directamente o mediante casos e ingresos vinculados a ventas. La consulta permanece disponible después de la salida. No incluye gastos generales o del lote como si fueran atribuciones individuales.
+
+La alimentación del lote indica su cantidad completa y no la atribuye al animal. Un gasto con varias atribuciones al mismo animal/casos se muestra una sola vez, indicando el porcentaje atribuible y el importe total del gasto; no se presenta ese importe completo como costo individual. Los eventos reemplazados se excluyen. El destete sustituye la etiqueta del pesaje asociado, usando las notas y autor del destete y su edad histórica, sin duplicar el evento. Una pauta de tratamiento se identifica como dosis indicada, sin afirmar aplicaciones de cada dosis.
+
+Las fechas clínicas se conservan como fechas del evento. El alta y los cambios de estado usan la fecha del registro UTC de sus fuentes y se identifican explícitamente; no se inventa una fecha clínica para reabrir/cambiar un caso. Cuando la fuente no conserva autor y no existe auditoría inicial, no se inventa un responsable. Los nombres y relaciones de catálogos son los actuales; esta vista reúne evidencia disponible, no reconstruye instantáneas históricas ausentes.

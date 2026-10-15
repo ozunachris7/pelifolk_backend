@@ -1,5 +1,7 @@
 # Revisión del modelo de Pelifolk
 
+> Esta revisión corresponde a una fase inicial. Sus tablas de cobertura y pendientes no reflejan los módulos desarrollados después. Consultar el [inventario actualizado](../docs/ESTADO_Y_PENDIENTES.md).
+
 Fuente revisada: `PROYECTO APP PELIFOLK ING NIVON.docx`, ubicado en el proyecto frontend `/home/ameth-toledo/Documentos/pelifolk`. El documento es un descubrimiento de necesidades, no una especificación cerrada.
 
 ## Base de datos en inglés

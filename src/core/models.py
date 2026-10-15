@@ -238,6 +238,7 @@ class EventTreatmentModel(Base):
     frequency_hours: Mapped[int | None] = mapped_column(Integer)
     duration_days: Mapped[int] = mapped_column(Integer, default=1)
     start_date: Mapped[date] = mapped_column(Date)
+    withdrawal_days: Mapped[int | None] = mapped_column(Integer)
     end_date: Mapped[date] = mapped_column(Date, Computed(TreatmentEnd(), persisted=True))
 
 
@@ -272,6 +273,7 @@ class EventMatingModel(Base):
     event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     event_type_id: Mapped[int] = mapped_column(Integer, default=5)
     male_id: Mapped[str] = mapped_column(ForeignKey('animals.id'))
+    kinship_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 class EventPregnancyModel(Base):
     __tablename__ = 'event_pregnancy_diagnoses'
@@ -339,3 +341,81 @@ class IncomeModel(Base):
     date: Mapped[date] = mapped_column(Date)
     exit_event_id: Mapped[str | None] = mapped_column(ForeignKey('exits.event_id'), unique=True)
     description: Mapped[str | None] = mapped_column(Text)
+
+
+class FeedModel(Base):
+    __tablename__ = 'feeds'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(150), unique=True)
+    unit_id: Mapped[int] = mapped_column(ForeignKey('units.id'))
+
+
+class FeedPriceModel(Base):
+    __tablename__ = 'feed_prices'
+    __table_args__ = (CheckConstraint('unit_cost >= 0'),)
+    feed_id: Mapped[str] = mapped_column(ForeignKey('feeds.id'), primary_key=True)
+    effective_from: Mapped[date] = mapped_column(Date, primary_key=True)
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(12,4))
+
+
+class FeedingModel(Base):
+    __tablename__ = 'feedings'
+    __table_args__ = (CheckConstraint('quantity > 0'), CheckConstraint('(animal_id IS NOT NULL) + (group_id IS NOT NULL) = 1'))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    animal_id: Mapped[str | None] = mapped_column(ForeignKey('animals.id'))
+    group_id: Mapped[str | None] = mapped_column(ForeignKey('animal_groups.id'))
+    date: Mapped[date] = mapped_column(Date)
+    feed_id: Mapped[str] = mapped_column(ForeignKey('feeds.id'))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(10,2))
+
+
+class ExpenseAllocationModel(Base):
+    __tablename__ = 'expense_allocations'
+    __table_args__ = (
+        CheckConstraint('percentage > 0 AND percentage <= 100'),
+        CheckConstraint('(animal_id IS NOT NULL) + (group_id IS NOT NULL) + (health_case_id IS NOT NULL) = 1'),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    expense_id: Mapped[str] = mapped_column(ForeignKey('expenses.id', ondelete='CASCADE'))
+    animal_id: Mapped[str | None] = mapped_column(ForeignKey('animals.id'))
+    group_id: Mapped[str | None] = mapped_column(ForeignKey('animal_groups.id'))
+    health_case_id: Mapped[str | None] = mapped_column(ForeignKey('health_cases.id'))
+    percentage: Mapped[Decimal] = mapped_column(Numeric(5,2), default=100)
+
+
+class CaseFollowupModel(Base):
+    __tablename__ = 'health_case_followups'
+    __table_args__ = (CheckConstraint('next_review_date IS NULL OR next_review_date >= date'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    health_case_id: Mapped[str] = mapped_column(ForeignKey('health_cases.id'))
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    evolution: Mapped[str] = mapped_column(String(20))
+    treatment_result: Mapped[str] = mapped_column(String(25))
+    notes: Mapped[str] = mapped_column(Text)
+    next_review_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    date: Mapped[date] = mapped_column(Date)
+
+
+class AnimalDecisionModel(Base):
+    __tablename__ = 'animal_decisions'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    animal_id: Mapped[str] = mapped_column(ForeignKey('animals.id'))
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    kind: Mapped[str] = mapped_column(String(30))
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    date: Mapped[date] = mapped_column(Date)
+
+
+class EventWeaningModel(Base):
+    __tablename__ = 'event_weanings'
+    event_id: Mapped[str] = mapped_column(ForeignKey('event_weights.event_id'), primary_key=True)
+    animal_id: Mapped[str] = mapped_column(ForeignKey('animals.id'), unique=True)
+    mother_id: Mapped[str | None] = mapped_column(ForeignKey('animals.id'), nullable=True)
+    birth_date_snapshot: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))

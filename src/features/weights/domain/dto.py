@@ -30,6 +30,7 @@ class AnimalSummary(BaseModel):
 
 
 class WeightResponse(BaseModel):
+    is_weaning: bool = False
     id: str
     animal: AnimalSummary
     date: date

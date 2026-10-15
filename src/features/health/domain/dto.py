@@ -233,11 +233,59 @@ class TreatmentResponse(BaseModel):
     duration_days: int
     recorded_by: str
 
+Evolution = Literal['improved', 'unchanged', 'worsened', 'recovered']
+TreatmentResult = Literal['not_assessed', 'effective', 'partially_effective', 'not_effective']
+
+class FollowupInput(PastDateInput):
+    model_config = {'extra': 'forbid'}
+    date: date
+    evolution: Evolution
+    treatment_result: TreatmentResult = 'not_assessed'
+    notes: str = Field(min_length=1, max_length=5000)
+    next_review_date: date | None = None
+
+    @field_validator('notes', mode='before')
+    @classmethod
+    def trim(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode='after')
+    def review_date(self):
+        if self.next_review_date and self.next_review_date < self.date:
+            raise ValueError('Review date cannot be before followup')
+        return self
+
+class FollowupResponse(BaseModel):
+    id: str
+    health_case_id: str
+    animal: AnimalSummary
+    date: date
+    evolution: Evolution
+    treatment_result: TreatmentResult
+    notes: str
+    next_review_date: date | None
+    recorded_by: str
+    created_at: str
+
+class ReviewResponse(BaseModel):
+    case: CaseResponse
+    followup: FollowupResponse
+    next_review_date: date
+    status: Literal['overdue', 'due', 'upcoming']
+
+class ReviewPage(BaseModel):
+    items: list[ReviewResponse]
+    total: int
+    offset: int
+    limit: int
+    as_of: date
+
 class CaseDetail(BaseModel):
     case: CaseResponse
     activity: list[CaseActivity]
     diagnoses: list[DiagnosisResponse]
     treatments: list[TreatmentResponse]
+    followups: list[FollowupResponse] = Field(default_factory=list)
 
 class HealthHistory(BaseModel):
     animal: AnimalSummary
@@ -245,3 +293,4 @@ class HealthHistory(BaseModel):
     cases: list[CaseResponse]
     diagnoses: list[DiagnosisResponse]
     treatments: list[TreatmentResponse]
+    followups: list[FollowupResponse] = Field(default_factory=list)

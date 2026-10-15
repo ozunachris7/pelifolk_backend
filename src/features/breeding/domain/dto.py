@@ -52,6 +52,23 @@ class AnimalSummary(BaseModel):
     siniiga: str | None
     sex: str
 
+class KinshipMatch(BaseModel):
+    kind: Literal['direct_ancestor','shared_parent','shared_grandparent','parent_grandparent']
+    ancestor: AnimalSummary
+    female_paths: list[str]
+    male_paths: list[str]
+
+class KinshipResponse(BaseModel):
+    female: AnimalSummary
+    male: AnimalSummary
+    depth: int
+    status: Literal['related','no_relationship_found','insufficient_data']
+    lineage_complete: bool
+    invalid_lineage: bool
+    missing_female: list[str]
+    missing_male: list[str]
+    matches: list[KinshipMatch]
+
 class OffspringResponse(BaseModel):
     animal: AnimalSummary
     alive: bool
@@ -65,6 +82,7 @@ class BreedingEvent(BaseModel):
     notes: str | None
     recorded_by: str
     male: AnimalSummary | None = None
+    kinship: KinshipResponse | None = None
     result: str | None = None
     mating_event_id: str | None = None
     birth_type: str | None = None

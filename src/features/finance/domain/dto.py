@@ -80,6 +80,7 @@ class MoneyResponse(BaseModel):
     description: str | None
     supplier: SupplierResponse | None = None
     sale: SaleResponse | None = None
+    allocation_count: int = 0
 
 
 class MoneyPage(BaseModel):

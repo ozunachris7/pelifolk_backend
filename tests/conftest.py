@@ -28,7 +28,7 @@ def api():
     factory = sessionmaker(engine, expire_on_commit=False)
     with factory.begin() as session:
         session.add(BirthTypeModel(id=1,name='natural'))
-        session.add_all([EventTypeModel(id=i,code=code,name=code) for i,code in [(5,'mating'),(6,'pregnancy_diagnosis'),(7,'birth'),(8,'exit')]])
+        session.add_all([EventTypeModel(id=i,code=code,name=code) for i,code in [(5,'mating'),(6,'pregnancy_diagnosis'),(7,'birth'),(8,'exit'),(9,'location_movement')]])
         session.add_all([ProductTypeModel(id=1,name='medicine'), UnitModel(id=1,code='ml'), AdministrationRouteModel(id=1,name='oral')])
         session.add(EventTypeModel(id=3,code='treatment',name='Treatment'))
         session.add(EventTypeModel(id=2, code='diagnosis', name='Diagnosis'))

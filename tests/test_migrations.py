@@ -448,3 +448,31 @@ def test_mysql_finance_precision_sales_and_restart(mysql_engine):
         assert received['sale']['animal_name']=='Aurora'
         assert repo.summary(None,None)['balance']==Decimal('200.20')
         assert repo.sale_options('')==[]
+
+
+def test_mysql_feeding_prices_and_decimal_cost(mysql_engine):
+    from datetime import date
+    from types import SimpleNamespace
+    from decimal import Decimal
+    from sqlalchemy.orm import Session
+    from src.core.models import UserModel, AnimalModel
+    from src.features.feeding.domain.dto import FeedInput, PriceInput, FeedingInput
+    from src.features.feeding.infrastructure.repository import SQLFeedingRepository
+    run_migrations(mysql_engine)
+    run_migrations(mysql_engine)
+    with mysql_engine.connect() as connection:
+        assert connection.execute(text("SELECT COUNT(*) FROM role_permissions WHERE permission LIKE 'feeding:%'")).scalar()==4
+    with Session(mysql_engine) as db,db.begin():
+        user=UserModel(name='Test',paternal_lastname='Owner',maternal_lastname='Example',email='feeding@example.com',password_hash='unused',role_id='00000000-0000-4000-8000-000000000001')
+        animal=AnimalModel(name='Luna',sex='female',birth_date=date(2020,1,1))
+        db.add_all([user,animal]);db.flush()
+        actor=SimpleNamespace(id=user.id,role=SimpleNamespace(id=user.role_id));repo=SQLFeedingRepository(db)
+        unit=next(u['id'] for u in repo.units() if u['code']=='kg')
+        feed=repo.save_feed(FeedInput(name='Sheep feed',unit_id=unit),actor)
+        repo.add_price(feed['id'],PriceInput(effective_from='2024-01-01',unit_cost='10.1250'),actor)
+        repo.add_price(feed['id'],PriceInput(effective_from='2024-02-01',unit_cost='12.5000'),actor)
+        first=repo.create(FeedingInput(feed_id=feed['id'],animal_id=animal.id,date='2024-01-31',quantity='1.25'),actor)
+        second=repo.create(FeedingInput(feed_id=feed['id'],animal_id=animal.id,date='2024-02-01',quantity='2'),actor)
+        assert first['cost']==Decimal('12.66') and second['cost']==Decimal('25.00')
+        page=repo.page('',animal.id,None,None,None,0,1)
+        assert len(page['items'])==1 and page['total']==2 and page['total_cost']==Decimal('37.66')

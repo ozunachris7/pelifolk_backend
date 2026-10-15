@@ -36,7 +36,7 @@ class SQLBreedingRepository:
         a=self.animal(e.animal_id);u=self.db.get(UserModel,e.user_id)
         result=dict(id=e.id,animal=self.summary(a),date=e.date.date(),notes=e.reason,recorded_by=' '.join(filter(None,[u.name,u.middle_name,u.paternal_lastname,u.maternal_lastname])))
         if e.event_type_id==5:
-            m=self.db.get(EventMatingModel,e.id);return dict(**result,kind='mating',male=self.summary(self.animal(m.male_id)))
+            m=self.db.get(EventMatingModel,e.id);return dict(**result,kind='mating',male=self.summary(self.animal(m.male_id)),kinship=m.kinship_snapshot)
         if e.event_type_id==6:
             p=self.db.get(EventPregnancyModel,e.id);return dict(**result,kind='pregnancy',result=p.result,mating_event_id=p.mating_event_id)
         b=self.db.get(EventBirthModel,e.id)
@@ -63,6 +63,8 @@ class SQLBreedingRepository:
         animals=self.lock_animals(ids);mother=animals[str(data.animal_id)];self.validate(mother,'female',data.date)
         father=animals.get(str(data.male_id if kind=='mating' else data.father_id)) if kind in ('mating','birth') else None
         if father:self.validate(father,'male',data.date)
+        from .kinship import check_kinship
+        kinship = check_kinship(self.db,mother.id,father.id,lock=True) if kind == 'mating' else None
         day=datetime.combine(data.date,time.min)
         if kind=='pregnancy' and data.mating_event_id:
             mating=self.db.get(EventMatingModel,str(data.mating_event_id));event=self.db.get(EventModel,str(data.mating_event_id))
@@ -74,7 +76,7 @@ class SQLBreedingRepository:
             tags=[o.siniiga.lower() for o in data.offspring if o.siniiga]
             if tags and self.db.scalar(select(AnimalModel.id).where(func.lower(AnimalModel.siniiga).in_(tags)).limit(1)):raise ApplicationError('SINIIGA already exists',409)
         event=EventModel(animal_id=mother.id,event_type_id={'mating':5,'pregnancy':6,'birth':7}[kind],date=day,user_id=actor.id,role_id=actor.role.id,reason=data.notes or None);self.db.add(event);self.db.flush()
-        if kind=='mating':self.db.add(EventMatingModel(event_id=event.id,event_type_id=5,male_id=father.id))
+        if kind=='mating':self.db.add(EventMatingModel(event_id=event.id,event_type_id=5,male_id=father.id,kinship_snapshot=kinship))
         elif kind=='pregnancy':self.db.add(EventPregnancyModel(event_id=event.id,event_type_id=6,result=data.result,mating_event_id=str(data.mating_event_id) if data.mating_event_id else None))
         else:
             self.db.add(EventBirthModel(event_id=event.id,event_type_id=7,birth_type_id=data.birth_type_id,notes=data.notes or None));self.db.flush()
@@ -85,5 +87,5 @@ class SQLBreedingRepository:
                 if not child.alive:
                     death=EventModel(animal_id=a.id,event_type_id=8,date=day,user_id=actor.id,role_id=actor.role.id,reason='Stillborn offspring');self.db.add(death);self.db.flush();self.db.add(ExitModel(event_id=death.id,event_type_id=8,exit_type='death'))
                     self.db.add(AuditModel(user_id=actor.id,table='events',record_id=death.id,action='INSERT',new_values=dict(animal_id=a.id,event_type_id=8,exit_type='death',date=data.date.isoformat())))
-        self.db.add(AuditModel(user_id=actor.id,table='events',record_id=event.id,action='INSERT',new_values=dict(event_type_id=event.event_type_id,role_id=actor.role.id,**data.model_dump(mode='json'))));self.db.flush()
+        self.db.add(AuditModel(user_id=actor.id,table='events',record_id=event.id,action='INSERT',new_values=dict(**({'kinship':kinship} if kinship is not None else {}),event_type_id=event.event_type_id,role_id=actor.role.id,**data.model_dump(mode='json'))));self.db.flush()
         return self.response(event)

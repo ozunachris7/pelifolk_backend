@@ -3,7 +3,7 @@ from sqlalchemy import func, or_, select
 from src.core.errors import ApplicationError
 from src.core.herd import effective_exit_query
 from src.core.models import (AnimalModel, AuditModel, EventModel, ExitModel, ExpenseCategoryModel,
-    IncomeCategoryModel, ExpenseModel, IncomeModel, SupplierModel)
+    IncomeCategoryModel, ExpenseModel, IncomeModel, SupplierModel, ExpenseAllocationModel)
 
 
 class SQLFinanceRepository:
@@ -94,7 +94,8 @@ class SQLFinanceRepository:
 
     def money_query(self, kind):
         if kind == 'expense':
-            return select(ExpenseModel,ExpenseCategoryModel,SupplierModel).join(ExpenseCategoryModel,ExpenseCategoryModel.id==ExpenseModel.expense_category_id).outerjoin(SupplierModel,SupplierModel.id==ExpenseModel.supplier_id)
+            count = select(func.count(ExpenseAllocationModel.id)).where(ExpenseAllocationModel.expense_id==ExpenseModel.id).correlate(ExpenseModel).scalar_subquery()
+            return select(ExpenseModel,ExpenseCategoryModel,SupplierModel,count).join(ExpenseCategoryModel,ExpenseCategoryModel.id==ExpenseModel.expense_category_id).outerjoin(SupplierModel,SupplierModel.id==ExpenseModel.supplier_id)
         return select(IncomeModel,IncomeCategoryModel,EventModel,AnimalModel).join(IncomeCategoryModel,IncomeCategoryModel.id==IncomeModel.income_category_id).outerjoin(EventModel,EventModel.id==IncomeModel.exit_event_id).outerjoin(AnimalModel,AnimalModel.id==EventModel.animal_id)
 
     def money_response(self, kind, row):
@@ -102,6 +103,7 @@ class SQLFinanceRepository:
         result = dict(id=record.id,category=self.category_response(category),amount=record.amount,date=record.date,description=record.description)
         if kind == 'expense':
             result['supplier'] = self.supplier_response(row[2]) if row[2] else None
+            result['allocation_count'] = row[3] if len(row)>3 else 0
         else:
             result['sale'] = self.sale_response(row[2],row[3]) if row[2] else None
         return result
