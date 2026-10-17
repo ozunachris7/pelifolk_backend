@@ -63,7 +63,7 @@ def test_assignment_transfer_removal_and_history(api):
     assert client.put('/api/v1/groups/'+second['id'], headers=owner, json={'name': 'Reproductoras', 'active': False}).status_code == 200
     assert assign(client, owner, second['id'], [saved['id']], '2024-04-01').status_code == 409
     with factory() as session:
-        audits = session.scalars(select(AuditModel).where(AuditModel.table == 'group_animals')).all()
+        audits = session.scalars(select(AuditModel).where(AuditModel.table == 'group_animals').order_by(AuditModel.date,AuditModel.id)).all()
         assert [a.action for a in audits] == ['INSERT', 'UPDATE', 'INSERT', 'UPDATE']
 
 

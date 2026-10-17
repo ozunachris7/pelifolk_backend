@@ -62,24 +62,6 @@ def test_failed_migration_stops_startup(monkeypatch):
             pytest.fail("Startup must not succeed")
 
 
-@pytest.fixture
-def mysql_engine():
-    url = os.environ.get("PELIFOLK_TEST_MYSQL_URL")
-    if not url:
-        pytest.skip("Set PELIFOLK_TEST_MYSQL_URL to run isolated MySQL integration tests")
-    admin = create_engine(url)
-    name = "pelifolk_test_" + uuid4().hex
-    with admin.connect() as connection:
-        connection.exec_driver_sql(f"CREATE DATABASE `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci")
-    engine = create_engine(admin.url.set(database=name))
-    try:
-        yield engine
-    finally:
-        engine.dispose()
-        with admin.connect() as connection:
-            connection.exec_driver_sql(f"DROP DATABASE `{name}`")
-        admin.dispose()
-
 
 def test_mysql_initialization_and_restart_preserve_data(mysql_engine):
     run_migrations(mysql_engine)
@@ -92,7 +74,9 @@ def test_mysql_initialization_and_restart_preserve_data(mysql_engine):
         row = connection.execute(text("SELECT completed_steps, applied_at FROM schema_migrations WHERE version = '0001_initial'")).one()
         assert row.completed_steps == 55
         assert row.applied_at is not None
-    assert len(inspect(mysql_engine).get_table_names()) == 43
+    from src.core.models import Base
+    assert set(Base.metadata.tables).issubset(inspect(mysql_engine).get_table_names())
+    assert 'schema_migrations' in inspect(mysql_engine).get_table_names()
     assert "middle_name" in {column["name"] for column in inspect(mysql_engine).get_columns("users")}
 
 
@@ -245,7 +229,9 @@ def test_mysql_health_cases_and_event_subtypes(mysql_engine):
     from src.features.health.infrastructure.repository import SQLHealthRepository
     run_migrations(mysql_engine);run_migrations(mysql_engine)
     with mysql_engine.connect() as connection:
-        assert connection.execute(text("SELECT COUNT(*) FROM role_permissions WHERE permission LIKE 'health:%'")).scalar()==4
+        from src.features.roles.domain.entities.Role import HEALTH_ACTIONS
+        grants=set(connection.execute(text("SELECT r.name,p.permission FROM role_permissions p JOIN roles r ON r.id=p.role_id WHERE p.permission LIKE 'health:%'")))
+        assert grants=={(name,p) for name in ('owner','administrator') for p in HEALTH_ACTIONS | {'health:read'}}
     with Session(mysql_engine) as db,db.begin():
         user=UserModel(name='Test',paternal_lastname='Owner',maternal_lastname='Example',email='health@example.com',password_hash='unused',role_id='00000000-0000-4000-8000-000000000001')
         animal=AnimalModel(name='Luna',sex='female',birth_date=date(2023,1,1))
@@ -476,3 +462,26 @@ def test_mysql_feeding_prices_and_decimal_cost(mysql_engine):
         assert first['cost']==Decimal('12.66') and second['cost']==Decimal('25.00')
         page=repo.page('',animal.id,None,None,None,0,1)
         assert len(page['items'])==1 and page['total']==2 and page['total_cost']==Decimal('37.66')
+
+
+def test_mysql_profile_photo_upgrade_preserves_users_and_restarts(mysql_engine, tmp_path):
+    from shutil import copy2
+    from src.core.migrations import MIGRATIONS_DIR
+    for path in MIGRATIONS_DIR.glob('*.sql'):
+        if path.name < '0032':
+            copy2(path, tmp_path / path.name)
+    run_migrations(mysql_engine, tmp_path)
+    with mysql_engine.begin() as connection:
+        connection.exec_driver_sql("""
+            INSERT INTO users (id, name, paternal_lastname, maternal_lastname, email, role_id, password_hash)
+            VALUES ('photo-existing-user', 'Profile', 'Example', 'Test', 'profile@example.com',
+                    '00000000-0000-4000-8000-000000000001', 'unchanged-hash')
+        """)
+    run_migrations(mysql_engine)
+    run_migrations(mysql_engine)
+    with mysql_engine.connect() as connection:
+        row = connection.exec_driver_sql(
+            "SELECT name, password_hash, profile_photo_url FROM users WHERE id='photo-existing-user'").one()
+        assert tuple(row) == ('Profile', 'unchanged-hash', None)
+        assert connection.exec_driver_sql(
+            "SELECT applied_at FROM schema_migrations WHERE version='0032_profile_photo'").scalar() is not None

@@ -1,0 +1,52 @@
+name: pelifolk
+services:
+  api:
+    build:
+      context: ..
+    env_file: ${PELIFOLK_API_ENV:-production.env}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./aiven-ca.pem:/run/aiven/ca.pem:ro
+      - profile_photos:/app/upload/photos_profile
+    networks: [backend]
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  web:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    networks: [edge, backend]
+    logging: *logging
+  https:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PELIFOLK_DOMAIN: ${PELIFOLK_DOMAIN:?Set PELIFOLK_DOMAIN in deploy/stack.env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in deploy/stack.env}
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+    networks: [edge]
+    logging: *logging
+networks:
+  edge:
+  backend:
+volumes:
+  profile_photos:
+  caddy_data:
+  caddy_config:

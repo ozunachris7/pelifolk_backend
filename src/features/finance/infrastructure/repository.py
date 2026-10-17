@@ -1,9 +1,10 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, time, timedelta
 from sqlalchemy import func, or_, select
 from src.core.errors import ApplicationError
 from src.core.herd import effective_exit_query
 from src.core.models import (AnimalModel, AuditModel, EventModel, ExitModel, ExpenseCategoryModel,
-    IncomeCategoryModel, ExpenseModel, IncomeModel, SupplierModel, ExpenseAllocationModel)
+    IncomeCategoryModel, ExpenseModel, IncomeModel, SupplierModel, ExpenseAllocationModel, EventWeightModel)
 
 
 class SQLFinanceRepository:
@@ -96,7 +97,7 @@ class SQLFinanceRepository:
         if kind == 'expense':
             count = select(func.count(ExpenseAllocationModel.id)).where(ExpenseAllocationModel.expense_id==ExpenseModel.id).correlate(ExpenseModel).scalar_subquery()
             return select(ExpenseModel,ExpenseCategoryModel,SupplierModel,count).join(ExpenseCategoryModel,ExpenseCategoryModel.id==ExpenseModel.expense_category_id).outerjoin(SupplierModel,SupplierModel.id==ExpenseModel.supplier_id)
-        return select(IncomeModel,IncomeCategoryModel,EventModel,AnimalModel).join(IncomeCategoryModel,IncomeCategoryModel.id==IncomeModel.income_category_id).outerjoin(EventModel,EventModel.id==IncomeModel.exit_event_id).outerjoin(AnimalModel,AnimalModel.id==EventModel.animal_id)
+        return select(IncomeModel,IncomeCategoryModel,EventModel,AnimalModel).join(IncomeCategoryModel,IncomeCategoryModel.id==IncomeModel.income_category_id).outerjoin(EventModel,EventModel.id==IncomeModel.exit_event_id).outerjoin(AnimalModel,AnimalModel.id==func.coalesce(EventModel.animal_id,IncomeModel.animal_id))
 
     def money_response(self, kind, row):
         record, category = row[:2]
@@ -106,6 +107,8 @@ class SQLFinanceRepository:
             result['allocation_count'] = row[3] if len(row)>3 else 0
         else:
             result['sale'] = self.sale_response(row[2],row[3]) if row[2] else None
+            result['animal'] = dict(id=row[3].id,name=row[3].name,siniiga=row[3].siniiga) if row[3] else None
+            result['sale_pricing'] = dict(weight_event_id=record.weight_event_id, weight_kg=record.sale_weight_kg, price_per_kg=record.price_per_kg) if record.weight_event_id else None
         return result
 
     def money_page(self, kind, q, category_id, date_from, date_to, offset, limit):
@@ -142,6 +145,21 @@ class SQLFinanceRepository:
             query = query.where(or_(AnimalModel.name.icontains(q,autoescape=True),AnimalModel.siniiga.icontains(q,autoescape=True)))
         return [self.sale_response(event,animal) for event,exit,animal in self.db.execute(query.order_by(EventModel.date.desc(),EventModel.id).limit(100))]
 
+    def weight_query(self, sale_event):
+        replacement = EventModel.__table__.alias('weight_replacement')
+        start = datetime.combine(sale_event.date.date(), time.min)
+        return select(EventModel, EventWeightModel).join(EventWeightModel, EventWeightModel.event_id == EventModel.id).where(
+            EventModel.animal_id == sale_event.animal_id,
+            EventModel.date >= start, EventModel.date < start + timedelta(days=1),
+            ~select(replacement.c.id).where(replacement.c.replaced_event_id == EventModel.id).exists())
+
+    def sale_weights(self, exit_id):
+        sale = self.db.execute(effective_exit_query().where(EventModel.id == exit_id)).first()
+        if sale is None or sale[1].exit_type != 'sale':
+            raise ApplicationError('Sale exit not found', 404)
+        return [dict(id=e.id, date=e.date.date(), weight_kg=w.weight_kg)
+                for e,w in self.db.execute(self.weight_query(sale[0]).order_by(EventModel.date.desc(), EventModel.created_at.desc(), EventModel.id.desc()))]
+
     def save_money(self, kind, data, actor, record_id=None):
         model = ExpenseModel if kind == 'expense' else IncomeModel
         # Match category deletion's lock order: category before financial record.
@@ -153,7 +171,7 @@ class SQLFinanceRepository:
             raise ApplicationError('Finance record not found',404)
         before = None
         if record_id:
-            before = {key:(str(value) if key=='amount' else value.isoformat() if key=='date' else value) for key,value in ((c.name,getattr(row,c.name)) for c in model.__table__.columns)}
+            before = {key:(str(value) if isinstance(value, Decimal) else value.isoformat() if key=='date' else value) for key,value in ((c.name,getattr(row,c.name)) for c in model.__table__.columns)}
         if kind == 'expense':
             supplier_id = str(data.supplier_id) if data.supplier_id else None
             if supplier_id:
@@ -174,13 +192,38 @@ class SQLFinanceRepository:
                     raise ApplicationError('Income date is before sale date',422)
                 if self.db.scalar(select(IncomeModel.id).where(IncomeModel.exit_event_id==exit_id,IncomeModel.id!=(record_id or '')).limit(1).with_for_update()):
                     raise ApplicationError('Sale already has an income',409)
+            animal_id = str(data.animal_id) if data.animal_id else None
+            if animal_id:
+                animal = self.db.scalar(select(AnimalModel).where(AnimalModel.id==animal_id).with_for_update())
+                if animal is None:
+                    raise ApplicationError('Income animal not found',422)
+                if animal.birth_date and data.date < animal.birth_date:
+                    raise ApplicationError('Income date is before animal birth',422)
+            row.animal_id = animal_id
             row.income_category_id = data.category_id
             row.exit_event_id = exit_id
-        row.amount = data.amount
+        amount = data.amount
+        if kind == 'income':
+            if data.pricing_mode == 'per_kg':
+                selected = self.db.execute(self.weight_query(sale[0]).where(EventModel.id == str(data.weight_event_id)).with_for_update()).first()
+                if selected is None:
+                    raise ApplicationError('Select an effective weight for this animal on the sale date',422)
+                weight = selected[1].weight_kg
+                amount = (weight * data.price_per_kg).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                if amount > Decimal('9999999999.99'):
+                    raise ApplicationError('Calculated sale amount exceeds the supported limit',422)
+                if data.amount is not None and data.amount != amount:
+                    raise ApplicationError('Amount differs from weight multiplied by price per kilogram',422)
+                row.weight_event_id = str(data.weight_event_id)
+                row.sale_weight_kg = weight
+                row.price_per_kg = data.price_per_kg
+            else:
+                row.weight_event_id = row.sale_weight_kg = row.price_per_kg = None
+        row.amount = amount
         row.date = data.date
         row.description = data.description or None
         self.db.add(row);self.db.flush()
-        after = {key:(str(value) if key=='amount' else value.isoformat() if key=='date' else value) for key,value in ((c.name,getattr(row,c.name)) for c in model.__table__.columns)}
+        after = {key:(str(value) if isinstance(value, Decimal) else value.isoformat() if key=='date' else value) for key,value in ((c.name,getattr(row,c.name)) for c in model.__table__.columns)}
         self.audit(model.__tablename__,row.id,actor,before,after)
         self.db.flush()
         return self.money_response(kind,self.db.execute(self.money_query(kind).where(model.id==row.id)).one())

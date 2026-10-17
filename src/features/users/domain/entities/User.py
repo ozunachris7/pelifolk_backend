@@ -15,3 +15,4 @@ class User:
     role: Role
     password_hash: str
     token_version: int
+    profile_photo_url: str | None = None

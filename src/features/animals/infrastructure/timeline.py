@@ -1,5 +1,5 @@
 """Permission-scoped, read-only timeline of recorded animal activity."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Literal, get_args
 from uuid import UUID
 
@@ -26,6 +26,7 @@ def sources(animal_id, permissions):
         m.AnimalModel.id == animal_id, m.AnimalModel.birth_date.is_not(None))]
     result.append(projection(m.AnimalModel, m.AnimalModel.id, m.AnimalModel.created_at, 'registration', 'animals').where(m.AnimalModel.id == animal_id))
     result.append(projection(m.AnimalDecisionModel, m.AnimalDecisionModel.id, m.AnimalDecisionModel.date, 'decision', 'animals').where(m.AnimalDecisionModel.animal_id == animal_id))
+    result.append(projection(m.PhysicalEvaluationModel, m.PhysicalEvaluationModel.id, m.PhysicalEvaluationModel.date, 'physical_evaluation', 'animals').where(m.PhysicalEvaluationModel.animal_id == animal_id))
     replacement = aliased(m.EventModel)
     for number, module in EVENT_MODULES.items():
         if module+':read' not in permissions:
@@ -41,7 +42,15 @@ def sources(animal_id, permissions):
         result.append(projection(m.EventModel, m.EventModel.id, m.EventModel.date, 'event', module).where(
             involved, m.EventModel.event_type_id == number,
             ~exists(select(replacement.id).where(replacement.replaced_event_id == m.EventModel.id))))
+    if 'breeding:read' in permissions:
+        result.append(projection(m.BreedingAssessmentModel, m.BreedingAssessmentModel.id, m.BreedingAssessmentModel.date, 'breeding_assessment', 'breeding').where(or_(m.BreedingAssessmentModel.animal_id == animal_id, m.BreedingAssessmentModel.mother_id == animal_id, m.BreedingAssessmentModel.father_id == animal_id)))
     if 'health:read' in permissions:
+        result.append(projection(m.AnimalIncidentModel, m.AnimalIncidentModel.id, m.AnimalIncidentModel.date, 'incident', 'health').where(m.AnimalIncidentModel.animal_id == animal_id))
+        result.append(projection(m.IncidentFollowupModel, m.IncidentFollowupModel.id, m.IncidentFollowupModel.date, 'incident_followup', 'health').join(m.AnimalIncidentModel, m.AnimalIncidentModel.id == m.IncidentFollowupModel.incident_id).where(m.AnimalIncidentModel.animal_id == animal_id))
+        result.append(projection(m.AnimalReactionModel, m.AnimalReactionModel.id, m.AnimalReactionModel.date, 'reaction', 'health').where(m.AnimalReactionModel.animal_id == animal_id))
+        result.append(projection(m.AnimalReactionModel, m.AnimalReactionModel.id, m.AnimalReactionModel.closed_date, 'reaction_closure', 'health').where(m.AnimalReactionModel.animal_id == animal_id, m.AnimalReactionModel.closed_date.is_not(None)))
+        result.append(projection(m.TreatmentDoseModel, m.TreatmentDoseModel.id, m.TreatmentDoseModel.clinical_date, 'dose', 'health').join(
+            m.EventModel, m.EventModel.id == m.TreatmentDoseModel.treatment_event_id).where(m.EventModel.animal_id == animal_id))
         cases = select(m.HealthCaseModel.id).where(m.HealthCaseModel.animal_id == animal_id)
         result.append(projection(m.HealthCaseModel, m.HealthCaseModel.id, m.HealthCaseModel.start_date, 'case_open', 'health').where(m.HealthCaseModel.animal_id == animal_id))
         result.append(projection(m.CaseFollowupModel, m.CaseFollowupModel.id, m.CaseFollowupModel.date, 'followup', 'health').where(m.CaseFollowupModel.health_case_id.in_(cases)))
@@ -64,7 +73,7 @@ def sources(animal_id, permissions):
             or_(m.ExpenseAllocationModel.animal_id == animal_id, m.ExpenseAllocationModel.health_case_id.in_(cases))))
         result.append(projection(m.ExpenseModel, m.ExpenseModel.id, m.ExpenseModel.date, 'expense', 'finance').where(attributed))
         exits = select(m.EventModel.id).where(m.EventModel.animal_id == animal_id)
-        result.append(projection(m.IncomeModel, m.IncomeModel.id, m.IncomeModel.date, 'income', 'finance').where(m.IncomeModel.exit_event_id.in_(exits)))
+        result.append(projection(m.IncomeModel, m.IncomeModel.id, m.IncomeModel.date, 'income', 'finance').where(or_(m.IncomeModel.exit_event_id.in_(exits),m.IncomeModel.animal_id==animal_id)))
     return result
 
 
@@ -124,6 +133,8 @@ class Timeline:
             item.update(notes=e.reason, recorded_by=self.author(e.user_id))
             if e.event_type_id == 1:
                 item.update(title='Observación', notes=self.get(m.EventObservationModel, ref).observation)
+                link = self.get(m.CaseObservationModel, ref)
+                if link: detail('Caso sanitario vinculado', self.get(m.HealthCaseModel, link.health_case_id).reason)
             elif e.event_type_id == 2:
                 d = self.get(m.EventDiagnosisModel, ref)
                 item.update(title='Diagnóstico', notes=d.diagnosis)
@@ -165,6 +176,62 @@ class Timeline:
             else:
                 item['title'] = 'Traslado de ubicación'
                 detail('Destino', self.name(m.LocationModel, e.location_id))
+        elif kind == 'breeding_assessment':
+            a = self.get(m.BreedingAssessmentModel, ref)
+            item.update(title='Evaluación de habilidad materna' if a.kind == 'maternal' else 'Evaluación observada de cría', notes=a.notes, recorded_by=self.author(a.user_id))
+            detail('Animal evaluado', self.name(m.AnimalModel, a.animal_id))
+            detail('Evaluada por', a.evaluated_by)
+            detail('Parto registrado', self.get(m.EventModel, a.birth_event_id).date.date())
+            for finding in a.findings:
+                detail(finding['label'], finding['observation'] or 'Sin evaluar')
+        elif kind == 'physical_evaluation':
+            evaluation = self.get(m.PhysicalEvaluationModel, ref)
+            item.update(title='Evaluación física descriptiva', notes=evaluation.notes, recorded_by=self.author(evaluation.user_id))
+            detail('Evaluada por', evaluation.evaluated_by)
+            detail('Criterios', evaluation.rubric_version)
+            for finding in evaluation.findings:
+                detail(finding['label'], finding['observation'] or 'Sin evaluar')
+        elif kind in ('incident', 'incident_followup'):
+            statuses = {'open':'Abierto','in_progress':'En seguimiento','closed':'Cerrado'}
+            types = {'accident':'Accidente','abortion':'Aborto reportado','attack':'Ataque','poisoning':'Intoxicación reportada','disappearance':'Desaparición','other':'Otro incidente'}
+            if kind == 'incident':
+                incident = self.get(m.AnimalIncidentModel, ref)
+                item.update(title=types[incident.kind], notes=incident.description, recorded_by=self.author(incident.user_id))
+                detail('Lugar reportado', incident.location)
+                detail('Acciones iniciales', incident.initial_actions)
+                case_id = incident.health_case_id
+            else:
+                followup = self.get(m.IncidentFollowupModel, ref)
+                incident = self.get(m.AnimalIncidentModel, followup.incident_id)
+                item.update(title='Seguimiento de incidente', notes=followup.notes, recorded_by=self.author(followup.user_id))
+                detail('Incidente', types[incident.kind])
+                detail('Fecha del incidente', incident.date)
+                detail('Estado al registrar', statuses[followup.status])
+                case_id = followup.health_case_id
+            if case_id: detail('Caso relacionado', self.get(m.HealthCaseModel, case_id).reason)
+        elif kind in ('reaction', 'reaction_closure'):
+            r = self.get(m.AnimalReactionModel, ref)
+            if kind == 'reaction':
+                item.update(title='Sospecha de alergia' if r.kind == 'suspected_allergy' else 'Reacción adversa observada', notes=r.description, recorded_by=self.author(r.user_id))
+            else:
+                item.update(title='Cierre de seguimiento de reacción', notes=r.closure_notes, recorded_by=self.author(r.closed_by))
+                detail('Fecha del reporte', r.date)
+            detail('Agente sospechado', r.suspected_agent)
+            if r.product_id: detail('Producto relacionado', self.name(m.ProductModel, r.product_id))
+            if r.dose_id:
+                d = self.get(m.TreatmentDoseModel, r.dose_id)
+                detail('Fecha de la dosis vinculada', d.clinical_date)
+                detail('Cantidad aplicada', f'{d.dose_value} {self.get(m.UnitModel,d.dose_unit_id).code}')
+        elif kind == 'dose':
+            d = self.get(m.TreatmentDoseModel, ref)
+            item.update(title='Dosis aplicada', notes=d.notes, recorded_by=self.author(d.user_id))
+            detail('Producto', self.name(m.ProductModel, d.product_id))
+            detail('Cantidad aplicada', f'{d.dose_value} {self.get(m.UnitModel, d.dose_unit_id).code}')
+            detail('Vía', self.name(m.AdministrationRouteModel, d.route_id))
+            applied = d.applied_at_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(minutes=d.utc_offset_minutes)))
+            detail('Hora de aplicación', applied.strftime('%H:%M:%S %z'))
+            detail('Aplicada por', d.administered_by)
+            if d.is_deviation: detail('Variación de pauta', 'Registrada con explicación')
         elif kind == 'case_open':
             c = self.get(m.HealthCaseModel, ref)
             item.update(title='Apertura de caso sanitario', notes=c.reason, recorded_by=self.initial_author('health_cases', ref))
@@ -206,7 +273,7 @@ class Timeline:
             detail('Importe total del gasto (MXN)', expense.amount)
         else:
             income = self.get(m.IncomeModel, ref)
-            item.update(title='Ingreso vinculado a la venta', notes=income.description, recorded_by=self.initial_author('incomes', ref))
+            item.update(title='Ingreso vinculado a la venta' if income.exit_event_id else 'Ingreso vinculado al animal', notes=income.description, recorded_by=self.initial_author('incomes', ref))
             detail('Importe (MXN)', income.amount)
         return item
 
@@ -235,5 +302,17 @@ def timeline(animal_id: UUID, module: Module | None = None, date_from: date | No
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     rows = db.execute(query.order_by(combined.c.date.desc(), combined.c.module, combined.c.kind, combined.c.reference).offset(offset).limit(limit))
     service = Timeline(db, animal_id, permissions)
-    return dict(items=[service.response(row) for row in rows], total=total, offset=offset, limit=limit,
+    items = [service.response(row) for row in rows]
+    refs = {i['id'].split(':',2)[1] for i in items}
+    rectified = set()
+    rectified_keys = set()
+    if refs:
+        for r in db.execute(select(m.HistoryRectificationModel.entry_key, m.HistoryRectificationModel.source_ref, m.HistoryRectificationModel.replacement_event_id).where(m.HistoryRectificationModel.animal_id==animal_id,
+                or_(m.HistoryRectificationModel.source_ref.in_(refs),m.HistoryRectificationModel.replacement_event_id.in_(refs)))):
+            kind = r.entry_key.split(':',1)[0]
+            rectified_keys.add(r.entry_key)
+            if kind not in ('group_start','group_end'): rectified.add((kind,r.source_ref))
+            if r.replacement_event_id: rectified.add(('event',r.replacement_event_id))
+    for i in items: i['has_rectifications'] = i['id'] in rectified_keys or (i['kind'],i['id'].split(':',2)[1]) in rectified
+    return dict(items=items, total=total, offset=offset, limit=limit,
                 modules=[name for name in get_args(Module) if name+':read' in permissions], date_from=date_from, date_to=date_to)

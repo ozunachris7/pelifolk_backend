@@ -77,7 +77,8 @@ def test_repeated_ancestors_keep_both_paths_and_legacy_cycles_are_bounded(api):
     match=next(x for x in check(client,h,f,m).json()['matches'] if x['ancestor']['id']==grand['id'])
     assert match['female_paths']==['mother.mother','father.mother']
     with factory.begin() as db:
-        db.get(AnimalModel,mother['id']).mother_id=mother['id']
+        # A two-animal legacy cycle is possible without violating MySQL's no-self-parent CHECK.
+        db.get(AnimalModel,mother['id']).mother_id=f['id']
     result=check(client,h,f,m).json()
     assert result['invalid_lineage'] and not result['lineage_complete']
 

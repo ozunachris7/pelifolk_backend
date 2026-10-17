@@ -1,7 +1,7 @@
-from src.core.models import FeedingModel
-from src.core.herd import exit_state, has_exited
-from src.core.locations import current_location
-from datetime import date, datetime
+from src.core.models import LocationModel, FeedingModel, TreatmentDoseModel, AnimalReactionModel, AnimalIncidentModel, PhysicalEvaluationModel, BreedingAssessmentModel
+from src.core.herd import exit_state, has_exited, effective_exit_query
+from src.core.locations import current_location, latest_location_event_id, location_summary
+from datetime import date, datetime, time
 from sqlalchemy import func, or_, select, exists
 from sqlalchemy.orm import aliased
 from src.core.errors import ApplicationError
@@ -19,19 +19,21 @@ class SQLAnimalRepository:
             raise ApplicationError('Animal not found', 404)
         return row
 
-    def _response(self, row):
+    def _response(self, row, *, statuses=None, locations=None, parents=None):
         def parent(parent_id):
             if not parent_id:
                 return None
+            if parents is not None:
+                return parents.get(parent_id)
             item = self._row(parent_id)
             return ParentResponse(id=item.id, name=item.name, siniiga=item.siniiga)
-        status, exit_date = exit_state(self.session, row.id)
+        status, exit_date = statuses.get(row.id, ('active', None)) if statuses is not None else exit_state(self.session, row.id)
         shares = sorted(row.breeds, key=lambda share: share.breed.name.casefold())
         return AnimalResponse(
             **{key: getattr(row, key) for key in ('id', 'name', 'siniiga', 'sex', 'birth_date',
                'origin', 'mother_id', 'father_id', 'is_breeder', 'created_at')},
             breeds=[BreedShareResponse(breed_id=s.breed_id, name=s.breed.name, percentage=s.percentage) for s in shares],
-            status=status, exit_date=exit_date, current_location=current_location(self.session, row.id),
+            status=status, exit_date=exit_date, current_location=locations.get(row.id) if locations is not None else current_location(self.session, row.id),
             mother=parent(row.mother_id), father=parent(row.father_id),
             purity=('pure' if len(shares) == 1 and shares[0].percentage == 100 else 'crossbred') if shares else None)
 
@@ -93,7 +95,28 @@ class SQLAnimalRepository:
         total = self.session.scalar(select(func.count()).select_from(query.subquery()))
         rows = self.session.scalars(query.order_by(AnimalModel.created_at.desc(), AnimalModel.id)
                                     .offset(offset).limit(limit)).all()
-        return AnimalPage(items=[self._response(row) for row in rows], total=total, offset=offset, limit=limit, excluded_parent_ids=sorted(excluded))
+        ids = [row.id for row in rows]
+        statuses, locations, parents = {}, {}, {}
+        if ids:
+            for event, departure in self.session.execute(effective_exit_query().where(
+                    EventModel.animal_id.in_(ids), EventModel.date <= datetime.combine(date.today(), time.max))
+                    .order_by(EventModel.date.desc(), EventModel.id)):
+                statuses.setdefault(event.animal_id, (departure.exit_type, event.date.date()))
+            active_ids = [aid for aid in ids if aid not in statuses]
+            if active_ids:
+                # One correlated lookup per page in MySQL, rather than three round trips per animal.
+                statement = select(AnimalModel.id, EventModel, LocationModel).select_from(AnimalModel).join(
+                    EventModel, EventModel.id == latest_location_event_id()).join(
+                    LocationModel, LocationModel.id == EventModel.location_id).where(AnimalModel.id.in_(active_ids))
+                for aid, event, location in self.session.execute(statement):
+                    locations[aid] = location_summary(location, event)
+            parent_ids = {pid for row in rows for pid in (row.mother_id, row.father_id) if pid}
+            if parent_ids:
+                for pid, name, siniiga in self.session.execute(select(AnimalModel.id, AnimalModel.name,
+                        AnimalModel.siniiga).where(AnimalModel.id.in_(parent_ids))):
+                    parents[pid] = ParentResponse(id=pid, name=name, siniiga=siniiga)
+        return AnimalPage(items=[self._response(row, statuses=statuses, locations=locations, parents=parents) for row in rows],
+                          total=total, offset=offset, limit=limit, excluded_parent_ids=sorted(excluded))
 
     def breeds(self):
         return [BreedResponse(id=b.id, name=b.name) for b in self.session.scalars(
@@ -170,6 +193,25 @@ class SQLAnimalRepository:
         if animal_id and data.birth_date and self.session.scalar(select(EventModel.id).where(EventModel.animal_id==animal_id,
                 EventModel.location_id.is_not(None), EventModel.date<datetime.combine(data.birth_date, datetime.min.time())).limit(1).with_for_update()):
             raise ApplicationError('Birth date conflicts with location history',422)
+        if animal_id and data.birth_date and self.session.scalar(select(TreatmentDoseModel.id).join(
+                EventModel, EventModel.id == TreatmentDoseModel.treatment_event_id).where(EventModel.animal_id == animal_id,
+                TreatmentDoseModel.clinical_date < data.birth_date).limit(1).with_for_update()):
+            raise ApplicationError('Birth date conflicts with applied dose history', 422)
+        if animal_id and data.sex != 'female' and self.session.scalar(select(AnimalIncidentModel.id).where(
+                AnimalIncidentModel.animal_id == animal_id, AnimalIncidentModel.kind == 'abortion').limit(1).with_for_update()):
+            raise ApplicationError('Sex conflicts with abortion history', 422)
+        if animal_id and data.birth_date and self.session.scalar(select(BreedingAssessmentModel.id).where(
+                BreedingAssessmentModel.animal_id == animal_id, BreedingAssessmentModel.date < data.birth_date).limit(1).with_for_update()):
+            raise ApplicationError('Birth date conflicts with breeding assessment history', 422)
+        if animal_id and data.birth_date and self.session.scalar(select(PhysicalEvaluationModel.id).where(
+                PhysicalEvaluationModel.animal_id == animal_id, PhysicalEvaluationModel.date < data.birth_date).limit(1).with_for_update()):
+            raise ApplicationError('Birth date conflicts with physical evaluation history', 422)
+        if animal_id and data.birth_date and self.session.scalar(select(AnimalIncidentModel.id).where(
+                AnimalIncidentModel.animal_id == animal_id, AnimalIncidentModel.date < data.birth_date).limit(1).with_for_update()):
+            raise ApplicationError('Birth date conflicts with incident history', 422)
+        if animal_id and data.birth_date and self.session.scalar(select(AnimalReactionModel.id).where(
+                AnimalReactionModel.animal_id == animal_id, AnimalReactionModel.date < data.birth_date).limit(1).with_for_update()):
+            raise ApplicationError('Birth date conflicts with reaction history', 422)
         if animal_id and data.birth_date and self.session.scalar(select(AnimalDecisionModel.id).where(AnimalDecisionModel.animal_id == animal_id, AnimalDecisionModel.date < data.birth_date).limit(1).with_for_update()):
             raise ApplicationError('Birth date conflicts with decision history', 422)
         if animal_id and data.birth_date and self.session.scalar(select(FeedingModel.id).where(FeedingModel.animal_id==animal_id,FeedingModel.date<data.birth_date).limit(1).with_for_update()):

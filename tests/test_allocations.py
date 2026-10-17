@@ -37,7 +37,7 @@ def test_allocations_atomic_rounding_editing_costs_and_clear(api):
     assert client.get(path,headers=h).json()['unassigned_amount']=='200.02'
     assert client.get('/api/v1/finance/costs',headers=h,params={'kind':'group','target_id':g['id']}).json()['assigned_expenses']=='0.00'
     with factory() as db:
-        audit=db.scalars(select(AuditModel).where(AuditModel.table=='expense_allocations')).all()
+        audit=db.scalars(select(AuditModel).where(AuditModel.table=='expense_allocations').order_by(AuditModel.date,AuditModel.id)).all()
         assert len(audit)==2 and audit[-1].old_values['allocations'] and audit[-1].new_values['allocations']==[]
         assert db.scalars(select(ExpenseAllocationModel)).all()==[]
 

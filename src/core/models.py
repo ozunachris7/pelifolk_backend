@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from datetime import date as calendar_date
 from decimal import Decimal
 from uuid import uuid4
 from sqlalchemy import Boolean, Computed, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, UniqueConstraint, Integer, JSON, Numeric, String, Text
@@ -41,6 +42,7 @@ class UserModel(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     token_version: Mapped[int] = mapped_column(Integer, default=0)
+    profile_photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     role: Mapped[RoleModel] = relationship(lazy="selectin")
 
@@ -199,6 +201,27 @@ class AdministrationRouteModel(Base):
     name: Mapped[str] = mapped_column(String(80), unique=True)
 
 
+class ProductPriceModel(Base):
+    __tablename__ = 'product_prices'
+    __table_args__ = (CheckConstraint('cost >= 0'),)
+    product_id: Mapped[str] = mapped_column(ForeignKey('products.id'), primary_key=True)
+    effective_from: Mapped[date] = mapped_column(Date, primary_key=True)
+    cost: Mapped[Decimal] = mapped_column(Numeric(12,2))
+
+
+class ActiveIngredientModel(Base):
+    __tablename__ = 'active_ingredients'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+
+
+class ProductIngredientModel(Base):
+    __tablename__ = 'product_ingredients'
+    product_id: Mapped[str] = mapped_column(ForeignKey('products.id', ondelete='CASCADE'), primary_key=True)
+    ingredient_id: Mapped[int] = mapped_column(ForeignKey('active_ingredients.id'), primary_key=True)
+    ingredient: Mapped[ActiveIngredientModel] = relationship(lazy='joined')
+
+
 class ProductModel(Base):
     __tablename__ = 'products'
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -207,6 +230,8 @@ class ProductModel(Base):
     unit_id: Mapped[int] = mapped_column(ForeignKey('units.id'))
     withdrawal_days: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    ingredients: Mapped[list[ProductIngredientModel]] = relationship(cascade='all, delete-orphan', lazy='selectin')
 
 
 from sqlalchemy.sql.expression import ColumnElement
@@ -334,12 +359,16 @@ class ExpenseModel(Base):
 
 class IncomeModel(Base):
     __tablename__ = 'incomes'
-    __table_args__ = (CheckConstraint('amount >= 0'),)
+    __table_args__ = (CheckConstraint('exit_event_id IS NULL OR animal_id IS NULL'), CheckConstraint('amount >= 0'), CheckConstraint("(weight_event_id IS NULL AND sale_weight_kg IS NULL AND price_per_kg IS NULL) OR (weight_event_id IS NOT NULL AND exit_event_id IS NOT NULL AND sale_weight_kg IS NOT NULL AND price_per_kg IS NOT NULL AND sale_weight_kg > 0 AND price_per_kg > 0)"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     income_category_id: Mapped[int] = mapped_column(ForeignKey('income_categories.id'))
     amount: Mapped[Decimal] = mapped_column(Numeric(12,2))
     date: Mapped[date] = mapped_column(Date)
+    animal_id: Mapped[str | None] = mapped_column(ForeignKey('animals.id'))
     exit_event_id: Mapped[str | None] = mapped_column(ForeignKey('exits.event_id'), unique=True)
+    weight_event_id: Mapped[str | None] = mapped_column(ForeignKey('event_weights.event_id'))
+    sale_weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(7,2))
+    price_per_kg: Mapped[Decimal | None] = mapped_column(Numeric(12,2))
     description: Mapped[str | None] = mapped_column(Text)
 
 
@@ -419,3 +448,157 @@ class EventWeaningModel(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
     role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+
+
+class CaseObservationModel(Base):
+    __tablename__ = 'health_case_observations'
+    observation_event_id: Mapped[str] = mapped_column(ForeignKey('event_observations.event_id'), primary_key=True)
+    health_case_id: Mapped[str] = mapped_column(ForeignKey('health_cases.id'))
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class TreatmentDoseModel(Base):
+    __tablename__ = 'treatment_doses'
+    __table_args__ = (
+        ForeignKeyConstraint(['treatment_event_id', 'product_id'], ['event_treatments.event_id', 'event_treatments.product_id']),
+        UniqueConstraint('treatment_event_id', 'product_id', 'applied_at_utc', name='uq_treatment_dose_time'),
+        CheckConstraint('dose_value > 0'),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    treatment_event_id: Mapped[str] = mapped_column(String(36))
+    product_id: Mapped[str] = mapped_column(String(36))
+    applied_at_utc: Mapped[datetime] = mapped_column(DateTime)
+    clinical_date: Mapped[date] = mapped_column(Date)
+    utc_offset_minutes: Mapped[int] = mapped_column(Integer)
+    administered_by: Mapped[str] = mapped_column(String(190))
+    dose_value: Mapped[Decimal] = mapped_column(Numeric(10, 3))
+    dose_unit_id: Mapped[int] = mapped_column(ForeignKey('units.id'))
+    route_id: Mapped[int] = mapped_column(ForeignKey('administration_routes.id'))
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_deviation: Mapped[bool] = mapped_column(Boolean, default=False)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AnimalReactionModel(Base):
+    __tablename__ = 'animal_reactions'
+    __table_args__ = (
+        CheckConstraint("kind IN ('suspected_allergy','adverse_reaction')"),
+        CheckConstraint('closed_date IS NULL OR closed_date >= date'),
+        CheckConstraint('(closed_date IS NULL AND closure_notes IS NULL AND closed_by IS NULL AND closure_role_id IS NULL AND closed_at IS NULL) OR (closed_date IS NOT NULL AND closure_notes IS NOT NULL AND closed_by IS NOT NULL AND closure_role_id IS NOT NULL AND closed_at IS NOT NULL)'),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    animal_id: Mapped[str] = mapped_column(ForeignKey('animals.id'), index=True)
+    date: Mapped[calendar_date] = mapped_column(Date)
+    kind: Mapped[str] = mapped_column(String(30))
+    description: Mapped[str] = mapped_column(Text)
+    suspected_agent: Mapped[str | None] = mapped_column(String(190))
+    product_id: Mapped[str | None] = mapped_column(ForeignKey('products.id'))
+    dose_id: Mapped[str | None] = mapped_column(ForeignKey('treatment_doses.id'))
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    closed_date: Mapped[calendar_date | None] = mapped_column(Date, nullable=True)
+    closure_notes: Mapped[str | None] = mapped_column(Text)
+    closed_by: Mapped[str | None] = mapped_column(ForeignKey('users.id'))
+    closure_role_id: Mapped[str | None] = mapped_column(ForeignKey('roles.id'))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class AnimalIncidentModel(Base):
+    __tablename__ = 'animal_incidents'
+    __table_args__ = (
+        CheckConstraint("kind IN ('accident','abortion','attack','poisoning','disappearance','other')"),
+        CheckConstraint("status IN ('open','in_progress','closed')"),
+        CheckConstraint('version >= 0'),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    animal_id: Mapped[str] = mapped_column(ForeignKey('animals.id'), index=True)
+    date: Mapped[calendar_date] = mapped_column(Date)
+    kind: Mapped[str] = mapped_column(String(30))
+    description: Mapped[str] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(String(190))
+    initial_actions: Mapped[str | None] = mapped_column(Text)
+    health_case_id: Mapped[str | None] = mapped_column(ForeignKey('health_cases.id'))
+    status: Mapped[str] = mapped_column(String(20), default='open')
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class IncidentFollowupModel(Base):
+    __tablename__ = 'incident_followups'
+    __table_args__ = (
+        CheckConstraint("status IN ('open','in_progress','closed')"),
+        UniqueConstraint('incident_id','version',name='uq_incident_followup_version'),
+        CheckConstraint('version > 0'),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    incident_id: Mapped[str] = mapped_column(ForeignKey('animal_incidents.id'), index=True)
+    date: Mapped[calendar_date] = mapped_column(Date)
+    notes: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20))
+    version: Mapped[int] = mapped_column(Integer)
+    health_case_id: Mapped[str | None] = mapped_column(ForeignKey('health_cases.id'))
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class PhysicalEvaluationModel(Base):
+    __tablename__ = 'physical_evaluations'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    animal_id: Mapped[str] = mapped_column(ForeignKey('animals.id'), index=True)
+    date: Mapped[calendar_date] = mapped_column(Date)
+    evaluated_by: Mapped[str] = mapped_column(String(190))
+    rubric_version: Mapped[str] = mapped_column(String(40))
+    findings: Mapped[list] = mapped_column(JSON)
+    notes: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class BreedingAssessmentModel(Base):
+    __tablename__ = 'breeding_assessments'
+    __table_args__ = (CheckConstraint("kind IN ('maternal','offspring')"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    birth_event_id: Mapped[str] = mapped_column(ForeignKey('event_births.event_id'), index=True)
+    animal_id: Mapped[str] = mapped_column(ForeignKey('animals.id'), index=True)
+    mother_id: Mapped[str] = mapped_column(ForeignKey('animals.id'), index=True)
+    father_id: Mapped[str | None] = mapped_column(ForeignKey('animals.id'))
+    kind: Mapped[str] = mapped_column(String(20))
+    date: Mapped[calendar_date] = mapped_column(Date)
+    evaluated_by: Mapped[str] = mapped_column(String(190))
+    rubric_version: Mapped[str] = mapped_column(String(40))
+    findings: Mapped[list] = mapped_column(JSON)
+    notes: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class HistoryRectificationModel(Base):
+    __tablename__ = 'history_rectifications'
+    __table_args__ = (UniqueConstraint('animal_id', 'entry_key', 'version'), CheckConstraint('version > 0'))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    animal_id: Mapped[str] = mapped_column(ForeignKey('animals.id'))
+    entry_key: Mapped[str] = mapped_column(String(200))
+    source_ref: Mapped[str] = mapped_column(String(36))
+    module: Mapped[str] = mapped_column(String(20))
+    version: Mapped[int] = mapped_column(Integer)
+    mode: Mapped[str] = mapped_column(String(30))
+    reason: Mapped[str] = mapped_column(Text)
+    clarification: Mapped[str | None] = mapped_column(Text)
+    source_snapshot: Mapped[dict] = mapped_column(JSON)
+    corrected_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    replacement_event_id: Mapped[str | None] = mapped_column(ForeignKey('events.id'), unique=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    role_id: Mapped[str] = mapped_column(ForeignKey('roles.id'))
+    recorded_by: Mapped[str] = mapped_column(String(500))
+    role_name: Mapped[str] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

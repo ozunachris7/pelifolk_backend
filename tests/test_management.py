@@ -145,7 +145,7 @@ def test_system_role_permissions_can_be_changed_without_renaming_or_deleting(api
                       json={"name": "worker", "permissions": []}).status_code == 200
     assert client.get("/api/v1/users", headers=worker).status_code == 403
     with factory() as session:
-        audits = session.scalars(select(AuditModel).where(AuditModel.table == "roles")).all()
+        audits = session.scalars(select(AuditModel).where(AuditModel.table == "roles").order_by(AuditModel.date,AuditModel.id)).all()
         assert len(audits) == 2
         assert audits[0].new_values["permissions"] == ["users:read"]
 

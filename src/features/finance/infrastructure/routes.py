@@ -6,7 +6,7 @@ from src.core.database import get_db
 from src.core.errors import ApplicationError
 from src.features.auth.infrastructure.dependencies import require_permission
 from src.features.finance.domain.dto import (CategoryInput, CategoryKind, CategoryResponse, ExpenseInput,
-    FinanceSummary, IncomeInput, MoneyPage, MoneyResponse, SaleResponse, SupplierInput, SupplierPage, SupplierResponse)
+    FinanceSummary, IncomeInput, SaleWeightResponse, MoneyPage, MoneyResponse, SaleResponse, SupplierInput, SupplierPage, SupplierResponse)
 from .repository import SQLFinanceRepository
 
 router = APIRouter(prefix='/finance',tags=['Finance'])
@@ -68,6 +68,11 @@ def sale_options(q: str=Query('',max_length=100),income_id: UUID | None=None,act
     return repo.sale_options(q.strip(),str(income_id) if income_id else None)
 
 
+@router.get('/sales/{exit_id}/weights', response_model=list[SaleWeightResponse])
+def sale_weights(exit_id: UUID, actor=Depends(require_permission('finance:read')), repo=Depends(repository)):
+    return repo.sale_weights(str(exit_id))
+
+
 @router.get('/expenses',response_model=MoneyPage)
 def expenses(q: str=Query('',max_length=100),category_id: int | None=Query(None,gt=0),dates=Depends(date_range),offset: int=Query(0,ge=0),limit: int=Query(25,ge=1,le=100),actor=Depends(require_permission('finance:read')),repo=Depends(repository)):
     return repo.money_page('expense',q.strip(),category_id,*dates,offset,limit)
@@ -76,6 +81,15 @@ def expenses(q: str=Query('',max_length=100),category_id: int | None=Query(None,
 @router.get('/incomes',response_model=MoneyPage)
 def incomes(q: str=Query('',max_length=100),category_id: int | None=Query(None,gt=0),dates=Depends(date_range),offset: int=Query(0,ge=0),limit: int=Query(25,ge=1,le=100),actor=Depends(require_permission('finance:read')),repo=Depends(repository)):
     return repo.money_page('income',q.strip(),category_id,*dates,offset,limit)
+
+
+@router.get('/incomes/{income_id}',response_model=MoneyResponse)
+def income_detail(income_id: UUID,actor=Depends(require_permission('finance:read')),repo=Depends(repository)):
+    from src.core.models import IncomeModel
+    from sqlalchemy import select
+    row=repo.db.execute(repo.money_query('income').where(IncomeModel.id==str(income_id))).first()
+    if row is None:raise ApplicationError('Finance record not found',404)
+    return repo.money_response('income',row)
 
 
 @router.post('/expenses',response_model=MoneyResponse,status_code=201)

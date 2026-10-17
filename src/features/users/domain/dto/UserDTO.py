@@ -45,6 +45,31 @@ class UserUpdate(BaseModel):
         return self
 
 
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    middle_name: str | None = Field(default=None, min_length=1, max_length=120)
+    paternal_lastname: str | None = Field(default=None, min_length=1, max_length=120)
+    maternal_lastname: str | None = Field(default=None, min_length=1, max_length=120)
+    email: EmailStr | None = Field(default=None, max_length=190)
+    phone: str | None = Field(default=None, max_length=30)
+    clean = field_validator("name", "middle_name", "paternal_lastname", "maternal_lastname", "email", mode="before")(UserCreate.clean.__func__)
+
+    @field_validator("middle_name", "phone", mode="before")
+    @classmethod
+    def optional_text(cls, value):
+        return value.strip() or None if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def required_fields(self):
+        for name in self.model_fields_set - {"phone", "middle_name"}:
+            if getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        if not self.model_fields_set:
+            raise ValueError("At least one field is required")
+        return self
+
+
 class UserResponse(BaseModel):
     id: str
     name: str
@@ -57,9 +82,11 @@ class UserResponse(BaseModel):
     role_id: str
     role_name: str
     permissions: list[str]
+    profile_photo_url: str | None = None
 
     @classmethod
     def from_user(cls, user):
         return cls(id=user.id, name=user.name, middle_name=user.middle_name, paternal_lastname=user.paternal_lastname, maternal_lastname=user.maternal_lastname, email=user.email,
                    phone=user.phone, active=user.active, role_id=user.role.id,
-                   role_name=user.role.name, permissions=list(user.role.permissions))
+                   role_name=user.role.name, permissions=list(user.role.permissions),
+                   profile_photo_url=user.profile_photo_url)

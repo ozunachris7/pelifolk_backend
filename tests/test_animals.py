@@ -39,7 +39,7 @@ def test_animal_create_search_edit_detail_and_audit(api):
     data.update(breeds=[], mother_id=None, father_id=None, siniiga=None)
     assert client.put(f"/api/v1/animals/{child['id']}", headers=headers, json=data).json()['purity'] is None
     with factory() as session:
-        audits = session.scalars(select(AuditModel).where(AuditModel.record_id == child['id'])).all()
+        audits = session.scalars(select(AuditModel).where(AuditModel.record_id == child['id']).order_by(AuditModel.date,AuditModel.id)).all()
         assert [a.action for a in audits] == ['INSERT', 'UPDATE', 'UPDATE']
         assert audits[1].old_values['name'] == 'Luna'
 

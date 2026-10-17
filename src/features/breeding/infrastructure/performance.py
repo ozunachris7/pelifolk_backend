@@ -12,6 +12,7 @@ from src.core.herd import effective_exit_query
 from src.core.models import AnimalModel, BirthOffspringModel, EventBirthModel, EventMatingModel, EventModel, EventWeaningModel, EventWeightModel
 from src.features.auth.infrastructure.dependencies import require_permission
 from .repository import SQLBreedingRepository
+from .offspring_health import collect_case_counts, parent_counts, case_page
 
 router = APIRouter(prefix='/breeding/performance', tags=['Breeding'])
 
@@ -44,7 +45,7 @@ def exit_states(db, ids):
     return states
 
 
-def collect(db, parents, f):
+def collect(db, parents, f, include_health=False):
     ids = [a.id for a in parents]
     if not ids: return [], {}
     sex = parents[0].sex
@@ -57,6 +58,7 @@ def collect(db, parents, f):
     if f['date_to']: children_query = children_query.where(AnimalModel.birth_date <= f['date_to'])
     children = db.execute(children_query.order_by(AnimalModel.birth_date.desc(), AnimalModel.name, AnimalModel.id)).all()
     child_ids = [a.id for a, _, _ in children]
+    health = collect_case_counts(db, child_ids) if include_health else {}
     weanings = {}
     if child_ids:
         query = select(EventWeaningModel, EventModel, EventWeightModel).join(
@@ -76,6 +78,9 @@ def collect(db, parents, f):
         live_births=0, stillbirths=0, unknown_birth_condition=0, post_birth_deaths=0,
         in_herd=0, other_exits=0, weighed_offspring=0, average_birth_weight_kg=None,
         offspring_per_recorded_birth=None, weaned_offspring=0, average_weaning_weight_kg=None) for a in parents}
+    if include_health:
+        for metric in metrics.values():
+            metric['health'] = parent_counts()
     detail = {a.id: [] for a in parents}; weights = {a.id: [] for a in parents}; birth_sets = {a.id: set() for a in parents}
     weaning_weights = {a.id: [] for a in parents}
     for child, link, event in children:
@@ -84,6 +89,11 @@ def collect(db, parents, f):
         known = link is not None and event is not None and event.id in valid_births
         alive = link.alive if known else None
         weight = link.birth_weight_kg if known else None
+        if include_health:
+            child_health = health[child.id]
+            for key, value in child_health.items():
+                m['health'][key] += value
+            m['health']['offspring_with_cases' if child_health['total_cases'] else 'offspring_without_cases'] += 1
         m['offspring'] += 1
         m['live_births' if alive is True else 'stillbirths' if alive is False else 'unknown_birth_condition'] += 1
         if alive is True and state in ('death', 'slaughter'): m['post_birth_deaths'] += 1
@@ -95,7 +105,8 @@ def collect(db, parents, f):
         if known: birth_sets[parent_id].add(event.id)
         detail[parent_id].append(dict(animal=SQLBreedingRepository.summary(child), birth_date=child.birth_date,
             born_alive=alive, birth_weight_kg=str(weight) if weight is not None else None,
-            birth_event_id=event.id if known else None, status=state, exit_date=exit_day, weaning=weaning))
+            birth_event_id=event.id if known else None, status=state, exit_date=exit_day, weaning=weaning,
+            **(dict(health=health[child.id]) if include_health else {})))
     mating_query = select(EventModel, EventMatingModel).join(EventMatingModel, EventMatingModel.event_id == EventModel.id).where(
         (EventModel.animal_id if sex == 'female' else EventMatingModel.male_id).in_(ids), EventModel.event_type_id == 5)
     for event, mating in db.execute(event_period(mating_query, f)):
@@ -136,16 +147,28 @@ def performance(sex: Literal['female', 'male'] = 'female', q: str = Query('', ma
     query = select(AnimalModel).where(AnimalModel.sex == sex, or_(AnimalModel.is_breeder, has_children, recorded))
     if q.strip(): query = query.where(or_(AnimalModel.name.icontains(q.strip(), autoescape=True), AnimalModel.siniiga.icontains(q.strip(), autoescape=True)))
     parents = db.scalars(query.order_by(AnimalModel.name, AnimalModel.id)).all()
-    rows, _ = collect(db, parents, f)
+    include_health = 'health:read' in actor.role.permissions
+    rows, _ = collect(db, parents, f, include_health=include_health)
     if status != 'all': rows = [r for r in rows if (r['status'] == 'active') == (status == 'active')]
     summary = {key: sum(r[key] for r in rows) for key in ['matings', 'births', 'offspring', 'live_births', 'stillbirths', 'unknown_birth_condition', 'post_birth_deaths', 'in_herd', 'other_exits', 'weaned_offspring']}
-    return dict(as_of=date.today(), sex=sex, **f, items=rows[offset:offset+limit], total=len(rows), summary=summary, offset=offset, limit=limit)
+    health_summary = {key:sum(row['health'][key] for row in rows) for key in parent_counts()} if include_health else None
+    return dict(as_of=date.today(), sex=sex, **f, items=rows[offset:offset+limit], total=len(rows), summary=summary, offset=offset, limit=limit,
+                **(dict(health_summary=health_summary) if include_health else {}))
 
 
 @router.get('/{animal_id}/offspring')
 def offspring(animal_id: UUID, f=Depends(period), offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=100),
               actor=Depends(require_permission('breeding:read')), db: Session = Depends(get_db, scope='function')):
     animal = SQLBreedingRepository(db).animal(str(animal_id))
-    metrics, children = collect(db, [animal], f)
+    metrics, children = collect(db, [animal], f, include_health='health:read' in actor.role.permissions)
     rows = children[animal.id]
     return dict(as_of=date.today(), **f, parent=metrics[0], items=rows[offset:offset+limit], total=len(rows), offset=offset, limit=limit)
+
+
+@router.get('/{parent_id}/offspring/{child_id}/health-cases')
+def offspring_cases(parent_id: UUID, child_id: UUID, f=Depends(period),
+                    offset: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=100),
+                    actor=Depends(require_permission('breeding:read')),
+                    health_actor=Depends(require_permission('health:read')),
+                    db: Session = Depends(get_db, scope='function')):
+    return case_page(db, str(parent_id), str(child_id), f, offset, limit)

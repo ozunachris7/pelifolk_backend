@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from src.features.weights.domain.dto import AnimalSummary
 
 CaseStatus = Literal['open', 'under_treatment', 'closed']
@@ -26,6 +26,7 @@ class ObservationInput(PastDateInput):
         return value.strip() if isinstance(value, str) else value
 
 class CaseInput(PastDateInput):
+    observation_id: UUID | None = None
     animal_id: UUID
     start_date: date
     reason: str = Field(min_length=1, max_length=255)
@@ -49,12 +50,25 @@ class CaseStatusInput(PastDateInput):
             raise ValueError('Closed date is required only for closed cases')
         return self
 
+class LinkedCase(BaseModel):
+    id: str
+    reason: str
+    status: CaseStatus
+    start_date: date
+
+
+class ObservationCaseInput(BaseModel):
+    model_config = {'extra': 'forbid'}
+    case_id: UUID
+
+
 class ObservationResponse(BaseModel):
     id: str
     animal: AnimalSummary
     date: date
     observation: str
     recorded_by: str
+    health_case: LinkedCase | None = None
 
 class ObservationPage(BaseModel):
     items: list[ObservationResponse]
@@ -117,12 +131,48 @@ class TreatmentCatalogs(BaseModel):
     units: list[UnitResponse]
     routes: list[CatalogItem]
 
+class IngredientInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=120)
+
+
+class IngredientResponse(BaseModel):
+    id: int
+    name: str
+    product_count: int
+
+
+class IngredientPage(BaseModel):
+    items: list[IngredientResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class ProductPriceInput(BaseModel):
+    expected_unit_id: int | None = Field(default=None, gt=0)
+    model_config = ConfigDict(extra='forbid')
+    effective_from: date
+    cost: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+
+
 class ProductInput(BaseModel):
+    initial_price: ProductPriceInput | None = None
     name: str = Field(min_length=1, max_length=150)
     product_type_id: int = Field(gt=0)
     unit_id: int = Field(gt=0)
     withdrawal_days: int = Field(default=0, ge=0, le=2147483647)
     active: bool = True
+
+    # Omission preserves composition for older API clients; [] explicitly clears it.
+    ingredient_ids: list[int] | None = Field(default=None, max_length=100)
+
+    @field_validator('ingredient_ids')
+    @classmethod
+    def valid_ingredients(cls, value):
+        if value is not None and (any(i <= 0 for i in value) or len(set(value)) != len(value)):
+            raise ValueError('Ingredient IDs must be positive and unique')
+        return value
 
     @field_validator('name', mode='before')
     @classmethod
@@ -138,6 +188,8 @@ class ProductResponse(BaseModel):
     unit_code: str
     withdrawal_days: int
     active: bool
+    ingredients: list[CatalogItem] = Field(default_factory=list)
+    current_price: ProductPriceInput | None = None
 
 class ProductPage(BaseModel):
     items: list[ProductResponse]
@@ -281,6 +333,7 @@ class ReviewPage(BaseModel):
     as_of: date
 
 class CaseDetail(BaseModel):
+    observations: list[ObservationResponse] = Field(default_factory=list)
     case: CaseResponse
     activity: list[CaseActivity]
     diagnoses: list[DiagnosisResponse]

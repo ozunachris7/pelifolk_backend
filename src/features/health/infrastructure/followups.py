@@ -89,7 +89,7 @@ def repository(db: Session = Depends(get_db, scope='function')):
 
 
 @router.post('/cases/{case_id}/followups', response_model=FollowupResponse, status_code=201)
-def create(case_id: UUID, data: FollowupInput, actor=Depends(require_permission('health:write')),
+def create(case_id: UUID, data: FollowupInput, actor=Depends(require_permission('health:followups:create')),
            repo=Depends(repository)):
     return repo.create(str(case_id),data,actor)
 

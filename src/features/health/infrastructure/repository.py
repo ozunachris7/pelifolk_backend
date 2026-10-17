@@ -1,7 +1,7 @@
 from src.core.herd import has_exited, ensure_in_herd
 from datetime import date, datetime, time, timezone, timedelta
 from sqlalchemy import select, func, or_, exists
-from src.core.models import AnimalModel, EventModel, EventObservationModel, HealthCaseModel, EventDiagnosisModel, UserModel, AuditModel, ProductModel, UnitModel, ProductTypeModel, AdministrationRouteModel, EventTreatmentModel, HealthProgramModel, ExitModel, CaseFollowupModel
+from src.core.models import AnimalModel, EventModel, EventObservationModel, HealthCaseModel, EventDiagnosisModel, UserModel, AuditModel, ProductModel, UnitModel, ProductTypeModel, AdministrationRouteModel, EventTreatmentModel, HealthProgramModel, ExitModel, CaseFollowupModel, CaseObservationModel, TreatmentDoseModel, ActiveIngredientModel, ProductIngredientModel
 from src.core.errors import ApplicationError
 
 class SQLHealthRepository:
@@ -32,13 +32,15 @@ class SQLHealthRepository:
     def options(self, q, limit):
         return [self.summary(a) for a in self.db.scalars(self.search(select(AnimalModel).where(~has_exited(AnimalModel.id, date.today())), q).order_by(AnimalModel.name, AnimalModel.id).limit(limit))]
 
-    def observation_query(self):
+    def observation_query(self, include_replaced=False):
         replacement = select(EventModel.id).where(EventModel.replaced_event_id == EventObservationModel.event_id).correlate(EventObservationModel)
-        return select(EventModel, EventObservationModel, AnimalModel, UserModel).join(EventObservationModel, EventObservationModel.event_id == EventModel.id).join(AnimalModel, AnimalModel.id == EventModel.animal_id).join(UserModel, UserModel.id == EventModel.user_id).where(EventModel.event_type_id == 1, ~exists(replacement))
+        statement = select(EventModel, EventObservationModel, AnimalModel, UserModel, HealthCaseModel).join(EventObservationModel, EventObservationModel.event_id == EventModel.id).join(AnimalModel, AnimalModel.id == EventModel.animal_id).join(UserModel, UserModel.id == EventModel.user_id).outerjoin(CaseObservationModel, CaseObservationModel.observation_event_id == EventModel.id).outerjoin(HealthCaseModel, HealthCaseModel.id == CaseObservationModel.health_case_id).where(EventModel.event_type_id == 1)
+        return statement if include_replaced else statement.where(~exists(replacement))
 
     def observation_response(self, row):
-        event, observation, animal, user = row
-        return dict(id=event.id, animal=self.summary(animal), date=event.date.date(), observation=observation.observation, recorded_by=self.user_name(user))
+        event, observation, animal, user, *cases = row
+        case = cases[0] if cases else None
+        return dict(id=event.id, animal=self.summary(animal), date=event.date.date(), observation=observation.observation, recorded_by=self.user_name(user), health_case=dict(id=case.id, reason=case.reason, status=case.status, start_date=case.start_date) if case else None)
 
     def observations(self, q, offset, limit):
         statement = self.search(self.observation_query(), q)
@@ -79,10 +81,12 @@ class SQLHealthRepository:
         if animal.birth_date and data.start_date < animal.birth_date:
             raise ApplicationError('Health date is before birth date', 422)
         ensure_in_herd(self.db, animal.id, data.start_date)
+        source = self.validate_source(str(data.observation_id), animal.id, data.start_date) if data.observation_id else None
         case = HealthCaseModel(animal_id=animal.id, reason=data.reason, start_date=data.start_date, notes=data.notes or None, status='open')
         self.db.add(case);self.db.flush()
         self.db.add(AuditModel(user_id=actor.id, table='health_cases', record_id=case.id, action='INSERT', new_values=self.snapshot(case)))
         self.db.flush()
+        if source: self.attach_source(source, case, actor)
         return self.case_response(case, animal)
 
     def case(self, case_id, lock=False):
@@ -101,7 +105,61 @@ class SQLHealthRepository:
                 continue
             activity.append(dict(date=audit.date.replace(tzinfo=timezone.utc).isoformat(), recorded_by=self.user_name(user), action=audit.action, previous_status=(audit.old_values or {}).get('status'), status=new['status'], closed_date=new.get('closed_date')))
         from .followups import SQLFollowupRepository
-        return dict(followups=SQLFollowupRepository(self.db).followups(case_id=case_id), case=self.case_response(case, self.animal(case.animal_id)), activity=activity, diagnoses=self.diagnoses(case_id=case_id), treatments=self.treatments(case_id=case_id))
+        observations = [self.observation_response(row) for row in self.db.execute(
+            self.observation_query(include_replaced=True).where(CaseObservationModel.health_case_id == case_id)
+            .order_by(EventModel.date, EventModel.created_at, EventModel.id))]
+        return dict(observations=observations, followups=SQLFollowupRepository(self.db).followups(case_id=case_id), case=self.case_response(case, self.animal(case.animal_id)), activity=activity, diagnoses=self.diagnoses(case_id=case_id), treatments=self.treatments(case_id=case_id))
+
+    def source_event(self, observation_id, lock=False):
+        statement = select(EventModel).join(EventObservationModel, EventObservationModel.event_id == EventModel.id).where(
+            EventModel.id == observation_id, EventModel.event_type_id == 1)
+        event = self.db.scalar(statement.with_for_update() if lock else statement)
+        if event is None:
+            raise ApplicationError('Observation not found', 404)
+        replacement = select(EventModel.id).where(EventModel.replaced_event_id == event.id).limit(1)
+        if self.db.scalar(replacement.with_for_update() if lock else replacement):
+            raise ApplicationError('Observation has been replaced', 409)
+        return event
+
+    def validate_source(self, observation_id, animal_id, start_date, case_id=None):
+        event = self.source_event(observation_id, True)
+        if event.animal_id != animal_id:
+            raise ApplicationError('Observation and case belong to different animals', 422)
+        if event.date.date() > start_date:
+            raise ApplicationError('Case start date is before source observation', 422)
+        # A locking read sees the latest committed link under MySQL REPEATABLE READ.
+        existing = self.db.scalar(select(CaseObservationModel).where(
+            CaseObservationModel.observation_event_id == observation_id).with_for_update())
+        if existing and existing.health_case_id != case_id:
+            raise ApplicationError('Observation already linked to another case', 409)
+        return event
+
+    def attach_source(self, event, case, actor):
+        if self.db.get(CaseObservationModel, event.id):
+            return
+        self.db.add(CaseObservationModel(observation_event_id=event.id, health_case_id=case.id,
+                                        user_id=actor.id, role_id=actor.role.id))
+        self.db.add(AuditModel(table='health_case_observations', record_id=event.id, user_id=actor.id,
+            action='INSERT', new_values=dict(observation_event_id=event.id, health_case_id=case.id, role_id=actor.role.id)))
+        self.db.flush()
+
+    def source_cases(self, observation_id, q, limit):
+        event = self.source_event(observation_id)
+        statement = select(HealthCaseModel).where(HealthCaseModel.animal_id == event.animal_id,
+            HealthCaseModel.start_date >= event.date.date())
+        if q:
+            statement = statement.where(HealthCaseModel.reason.icontains(q, autoescape=True))
+        animal = self.animal(event.animal_id)
+        return [self.case_response(case, animal) for case in self.db.scalars(
+            statement.order_by(HealthCaseModel.start_date.desc(), HealthCaseModel.id).limit(limit))]
+
+    def link_observation(self, observation_id, case_id, actor):
+        event = self.source_event(observation_id)
+        self.animal(event.animal_id, True)
+        case = self.case(case_id, True)
+        event = self.validate_source(observation_id, case.animal_id, case.start_date, case.id)
+        self.attach_source(event, case, actor)
+        return self.case_response(case, self.animal(case.animal_id))
 
     def change_status(self, case_id, data, actor):
         case = self.case(case_id, True)
@@ -117,6 +175,11 @@ class SQLHealthRepository:
             raise ApplicationError('Closed date is before treatment ends', 422)
         if data.closed_date and self.db.scalar(select(CaseFollowupModel.id).where(CaseFollowupModel.health_case_id == case_id, CaseFollowupModel.date > data.closed_date).limit(1)):
             raise ApplicationError('Closed date is before a followup', 422)
+        if data.closed_date and self.db.scalar(select(TreatmentDoseModel.id).where(
+                TreatmentDoseModel.treatment_event_id == EventTreatmentModel.event_id,
+                TreatmentDoseModel.product_id == EventTreatmentModel.product_id,
+                EventTreatmentModel.health_case_id == case_id, TreatmentDoseModel.clinical_date > data.closed_date).limit(1).with_for_update()):
+            raise ApplicationError('Closed date is before an applied dose', 422)
         previous = self.snapshot(case)
         case.status, case.closed_date = data.status, data.closed_date
         self.db.add(AuditModel(user_id=actor.id, table='health_cases', record_id=case.id, action='UPDATE', old_values=previous, new_values=self.snapshot(case)))
@@ -165,11 +228,42 @@ class SQLHealthRepository:
         return self.diagnosis_response(event, diagnosis, animal, self.db.get(UserModel, actor.id))
 
 
+    def ingredients(self, q, offset, limit):
+        count = select(func.count()).select_from(ProductIngredientModel).where(ProductIngredientModel.ingredient_id == ActiveIngredientModel.id).correlate(ActiveIngredientModel).scalar_subquery()
+        query = select(ActiveIngredientModel, count)
+        if q:
+            query = query.where(ActiveIngredientModel.name.icontains(q, autoescape=True))
+        total = self.db.scalar(select(func.count()).select_from(query.subquery()))
+        return dict(items=[dict(id=i.id,name=i.name,product_count=n) for i,n in self.db.execute(query.order_by(ActiveIngredientModel.name,ActiveIngredientModel.id).offset(offset).limit(limit))], total=total,offset=offset,limit=limit)
+
+    def save_ingredient(self, data, actor, ingredient_id=None):
+        row = self.db.scalar(select(ActiveIngredientModel).where(ActiveIngredientModel.id == ingredient_id).with_for_update()) if ingredient_id else ActiveIngredientModel()
+        if row is None:
+            raise ApplicationError('Active ingredient not found',404)
+        if self.db.scalar(select(ActiveIngredientModel.id).where(func.lower(ActiveIngredientModel.name) == data.name.lower(), ActiveIngredientModel.id != (ingredient_id or 0)).limit(1)):
+            raise ApplicationError('Active ingredient already exists',409)
+        before = dict(id=row.id,name=row.name) if ingredient_id else None
+        row.name = data.name
+        self.db.add(row);self.db.flush()
+        after = dict(id=row.id,name=row.name)
+        self.db.add(AuditModel(user_id=actor.id,table='active_ingredients',record_id=str(row.id),action='UPDATE' if before else 'INSERT',old_values=before,new_values=after))
+        count = self.db.scalar(select(func.count()).select_from(ProductIngredientModel).where(ProductIngredientModel.ingredient_id == row.id))
+        return dict(**after,product_count=count)
+
+    def delete_ingredient(self, ingredient_id, actor):
+        row = self.db.scalar(select(ActiveIngredientModel).where(ActiveIngredientModel.id == ingredient_id).with_for_update())
+        if row is None:
+            raise ApplicationError('Active ingredient not found',404)
+        if self.db.scalar(select(ProductIngredientModel.product_id).where(ProductIngredientModel.ingredient_id == ingredient_id).limit(1).with_for_update()):
+            raise ApplicationError('Active ingredient is assigned to products',409)
+        self.db.add(AuditModel(user_id=actor.id,table='active_ingredients',record_id=str(row.id),action='DELETE',old_values=dict(id=row.id,name=row.name)))
+        self.db.delete(row);self.db.flush()
+
     def catalogs(self):
         return dict(product_types=[dict(id=p.id,name=p.name) for p in self.db.scalars(select(ProductTypeModel).order_by(ProductTypeModel.name))], units=[dict(id=u.id,code=u.code) for u in self.db.scalars(select(UnitModel).order_by(UnitModel.code))], routes=[dict(id=r.id,name=r.name) for r in self.db.scalars(select(AdministrationRouteModel).order_by(AdministrationRouteModel.name))])
 
     def product_response(self, product):
-        return dict(id=product.id, name=product.name, product_type_id=product.product_type_id, product_type_name=self.db.get(ProductTypeModel, product.product_type_id).name, unit_id=product.unit_id, unit_code=self.db.get(UnitModel, product.unit_id).code, withdrawal_days=product.withdrawal_days, active=product.active)
+        return dict(id=product.id, name=product.name, product_type_id=product.product_type_id, product_type_name=self.db.get(ProductTypeModel, product.product_type_id).name, unit_id=product.unit_id, unit_code=self.db.get(UnitModel, product.unit_id).code, withdrawal_days=product.withdrawal_days, active=product.active, ingredients=sorted([dict(id=link.ingredient.id,name=link.ingredient.name) for link in product.ingredients], key=lambda i:(i['name'].lower(), i['id'])))
 
     def products(self, q, active, offset, limit):
         statement=select(ProductModel)
@@ -190,12 +284,27 @@ class SQLHealthRepository:
             raise ApplicationError('Product name already exists',409)
         if not self.db.get(ProductTypeModel, data.product_type_id) or not self.db.get(UnitModel,data.unit_id):
             raise ApplicationError('Product catalog entry not found',422)
+        ingredients = None
+        if data.ingredient_ids is not None:
+            ingredients = self.db.scalars(select(ActiveIngredientModel).where(ActiveIngredientModel.id.in_(data.ingredient_ids)).order_by(ActiveIngredientModel.id).with_for_update()).all()
+            if len(ingredients) != len(data.ingredient_ids):
+                raise ApplicationError('Active ingredient not found',422)
+        if product and product.unit_id != data.unit_id:
+            from src.core.models import ProductPriceModel
+            if self.db.scalar(select(ProductPriceModel.product_id).where(ProductPriceModel.product_id == product.id).limit(1).with_for_update()):
+                raise ApplicationError('Product unit has price history',409)
         previous=self.product_response(product) if product else None
         if not product:
             product=ProductModel();self.db.add(product)
-        for name,value in data.model_dump().items():
+        for name,value in data.model_dump(exclude={'ingredient_ids','initial_price'}).items():
             setattr(product,name,value)
         self.db.flush()
+        if ingredients is not None:
+            requested = {i.id:i for i in ingredients}
+            product.ingredients[:] = [link for link in product.ingredients if link.ingredient_id in requested]
+            existing = {link.ingredient_id for link in product.ingredients}
+            product.ingredients.extend(ProductIngredientModel(ingredient_id=i,ingredient=row) for i,row in requested.items() if i not in existing)
+            self.db.flush()
         self.db.add(AuditModel(user_id=actor.id,table='products',record_id=product.id,action='UPDATE' if previous else 'INSERT',old_values=previous,new_values=self.product_response(product)))
         self.db.flush()
         return self.product_response(product)

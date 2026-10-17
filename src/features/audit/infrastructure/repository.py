@@ -7,7 +7,8 @@ from src.core.models import (AnimalModel, AuditModel, EventModel, UserModel, Rol
 from src.features.audit.domain.changes import changed_fields, redact
 
 TABLE_MODULES = {
-    'event_weanings':'weights', 'animal_decisions':'animals', 'animals':'animals', 'breeds':'animals', 'animal_breeds':'animals',
+    'history_rectifications':'animals',
+    'animal_incidents':'health', 'incident_followups':'health', 'animal_reactions':'health', 'treatment_doses':'health', 'health_case_observations':'health', 'event_weanings':'weights', 'breeding_assessments':'breeding', 'physical_evaluations':'animals', 'animal_decisions':'animals', 'animals':'animals', 'breeds':'animals', 'animal_breeds':'animals',
     'health_case_followups':'health', 'health_cases':'health', 'products':'health', 'health_programs':'health',
     'product_prices':'health', 'product_ingredients':'health',
     'locations':'locations', 'location_types':'locations',
@@ -34,7 +35,7 @@ class SQLAuditRepository:
         self.event_type = case((AuditModel.table == 'events', func.coalesce(
             AuditModel.new_values['event_type_id'].as_integer(),
             AuditModel.old_values['event_type_id'].as_integer(), EventModel.event_type_id)), else_=None)
-        self.module = case((AuditModel.table == 'events', case(EVENT_MODULES, value=self.event_type,
+        self.module = case((AuditModel.table == 'history_rectifications', AuditModel.new_values['module'].as_string()), (AuditModel.table == 'events', case(EVENT_MODULES, value=self.event_type,
             else_='other')), else_=case(TABLE_MODULES, value=AuditModel.table, else_='other'))
         self.record_name = func.coalesce(AuditModel.new_values['name'].as_string(),
             AuditModel.old_values['name'].as_string(), AuditModel.new_values['siniiga'].as_string(),

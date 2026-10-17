@@ -61,7 +61,35 @@ class ExpenseInput(MoneyInput):
 
 
 class IncomeInput(MoneyInput):
+    animal_id: UUID | None = None
+    amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     exit_event_id: UUID | None = None
+    pricing_mode: Literal['total', 'per_kg'] = 'total'
+    weight_event_id: UUID | None = None
+    price_per_kg: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+
+    @model_validator(mode='after')
+    def pricing(self):
+        if self.animal_id and self.exit_event_id:
+            raise ValueError('Use an animal or a sale link, not both')
+        if self.pricing_mode == 'per_kg':
+            if not self.exit_event_id or not self.weight_event_id or self.price_per_kg is None:
+                raise ValueError('Per kilogram pricing requires a sale, weight event and price')
+        elif self.amount is None or self.weight_event_id is not None or self.price_per_kg is not None:
+            raise ValueError('Total pricing requires an amount and no kilogram pricing fields')
+        return self
+
+
+class SaleWeightResponse(BaseModel):
+    id: str
+    date: date
+    weight_kg: Decimal
+
+
+class SalePricingResponse(BaseModel):
+    weight_event_id: str
+    weight_kg: Decimal
+    price_per_kg: Decimal
 
 
 class SaleResponse(BaseModel):
@@ -72,6 +100,12 @@ class SaleResponse(BaseModel):
     date: date
 
 
+class IncomeAnimalResponse(BaseModel):
+    id: str
+    name: str | None
+    siniiga: str | None
+
+
 class MoneyResponse(BaseModel):
     id: str
     category: CategoryResponse
@@ -80,7 +114,9 @@ class MoneyResponse(BaseModel):
     description: str | None
     supplier: SupplierResponse | None = None
     sale: SaleResponse | None = None
+    animal: IncomeAnimalResponse | None = None
     allocation_count: int = 0
+    sale_pricing: SalePricingResponse | None = None
 
 
 class MoneyPage(BaseModel):

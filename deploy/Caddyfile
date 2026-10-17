@@ -1,0 +1,15 @@
+{
+    email {$ACME_EMAIL}
+}
+{$PELIFOLK_DOMAIN} {
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+        X-Frame-Options DENY
+        -Server
+    }
+    reverse_proxy web:8080 {
+        # Always overwrite the untrusted incoming value. Only this proxy is public.
+        header_up X-Pelifolk-Client {remote_host}
+    }
+}

@@ -5,3 +5,16 @@ __pycache__/
 .pytest_cache/
 
 .codex
+# Deployment secrets and generated assets
+deploy/production.env
+deploy/stack.env
+deploy/aiven-ca.pem
+deploy/frontend/
+
+# Private backups and MySQL client credentials
+/backups/
+deploy/backup-client.cnf
+
+# User-uploaded profile photos
+/upload/photos_profile/*
+!/upload/photos_profile/.gitkeep

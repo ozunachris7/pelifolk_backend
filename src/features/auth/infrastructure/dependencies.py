@@ -31,7 +31,12 @@ def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bear
 
 def require_permission(permission: str):
     def dependency(user=Depends(current_user)):
-        if permission not in user.role.permissions:
+        missing_health_read = (
+            permission.startswith('health:')
+            and permission != 'health:read'
+            and 'health:read' not in user.role.permissions
+        )
+        if permission not in user.role.permissions or missing_health_read:
             raise ApplicationError("Insufficient permissions", 403)
         return user
     return dependency

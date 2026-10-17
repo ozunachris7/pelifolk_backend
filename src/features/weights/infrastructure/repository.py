@@ -51,14 +51,21 @@ class SQLWeightRepository:
         rows = self.db.execute(self.query().where(EventModel.animal_id == animal_id).order_by(EventModel.date, EventModel.created_at, EventModel.id))
         return dict(animal=self.summary(animal), items=[self.response(row) for row in rows])
 
-    def create(self, data, actor):
+    def create(self, data, actor, *, replacing_event_id=None):
         animal = self.animal(str(data.animal_id), lock=True)
         if animal.birth_date and data.date < animal.birth_date:
             raise ApplicationError('Weight date is before birth date', 422)
         ensure_in_herd(self.db, animal.id, data.date)
         # One measurement per calendar day makes daily gain unambiguous.
         day = datetime.combine(data.date, time.min)
-        if self.db.scalar(select(EventModel.id).join(EventWeightModel, EventWeightModel.event_id == EventModel.id).where(EventModel.animal_id == animal.id, EventModel.date >= day, EventModel.date < datetime.combine(data.date, time.max))):
+        duplicate = self.query().with_only_columns(EventModel.id).where(
+            EventModel.animal_id == animal.id, EventModel.date >= day,
+            EventModel.date <= datetime.combine(data.date, time.max))
+        if replacing_event_id:
+            duplicate = duplicate.where(EventModel.id != replacing_event_id)
+        # MySQL locking reads see the committed winner after waiting on the animal lock.
+        # A consistent read could retain the authentication snapshot under REPEATABLE READ.
+        if self.db.scalar(duplicate.limit(1).with_for_update()):
             raise ApplicationError('Animal already has a weight on this date', 409)
         event = EventModel(animal_id=animal.id, event_type_id=4, date=day, user_id=actor.id, role_id=actor.role.id, reason=data.notes)
         self.db.add(event)

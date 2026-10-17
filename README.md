@@ -409,7 +409,11 @@ La ubicación física y el lote son independientes. Un traslado no cambia la per
 
 `0014_treatment_withdrawal.sql` agrega un periodo histórico nullable a los tratamientos; se aplica automáticamente al arrancar la API. No modifica migraciones anteriores ni rellena el historial con el catálogo actual. Cada tratamiento nuevo, de caso o programa, guarda los días de retiro del producto bajo bloqueo del producto.
 
-En **Sanidad → Retiro sanitario** se consultan los animales activos y sus tratamientos efectivos. Los días de retiro positivos se cuentan como días calendario completos posteriores al último día del tratamiento (`end_date` es exclusivo); la fecha estimada es `end_date + withdrawal_days`. Se toma la mayor fecha entre productos y se descartan eventos reemplazados. Un tratamiento en curso muestra una estimación basada en su duración registrada, no una confirmación de última dosis administrada. Cero días mantiene la fecha de fin del tratamiento; no significa autorización inmediata para consumo. Los registros antiguos sin periodo histórico y las fechas que exceden el calendario aparecen **por verificar**, aunque otro tratamiento tenga una fecha conocida.
+En **Sanidad → Retiro sanitario** se consultan los animales activos y las aplicaciones reales por tratamiento y producto. Se usa la última administración por instante UTC y los días de retiro guardados al registrar el tratamiento, aunque cambie el catálogo. La convención de la aplicación es mostrar el primer día calendario completo posterior al periodo: fecha local de la última dosis + días guardados + 1; también con cero días se muestra el día siguiente. La fecha local conserva el desplazamiento horario registrado. Esta convención de calendario es propia del sistema.
+
+Sin aplicaciones, sin periodo histórico, con periodo inválido, variaciones de dosis o fechas fuera del calendario, el estado es **Por verificar**. La fecha calculada desde la pauta (`planned_release_date`) queda solo como referencia. Una pauta en curso mantiene el estado pendiente y no muestra fecha general; su estimación desde la última dosis es provisional. Las aplicaciones de pautas reemplazadas se conservan como exposición real y requieren revisión. Solo se descartan pautas reemplazadas sin aplicaciones.
+
+El resumen toma la mayor fecha conocida entre productos y oculta la fecha general si existe algún dato por verificar o una pauta en curso. El detalle incluye `last_applied_at`, `application_count`, `estimated_release_date`, `planned_release_date`, `calculation_basis` y `review_reasons`. Las consultas a una fecha excluyen aplicaciones de días clínicos posteriores. Al guardar una salida, se recalcula bajo bloqueo para conservar el resultado actualizado en su auditoría. No cambia los permisos ni requiere una migración adicional a `0021_treatment_doses.sql`.
 
 `GET /api/v1/health/withdrawals` admite búsqueda y paginación (permiso `health:read`); `GET /api/v1/health/animals/{id}/withdrawal` incluye el detalle. `GET /api/v1/exits/animals/{id}/withdrawal?date=YYYY-MM-DD` requiere `exits:read` y entrega solamente el resumen a la fecha de salida. El formulario de venta/sacrificio consulta ese resumen antes de guardar y avisa sobre retiros pendientes o datos por verificar. El backend calcula nuevamente el estado y lo conserva en la auditoría de la salida; el aviso no prohíbe registrar una venta. Permanecen las validaciones de fechas contra el historial.
 
@@ -490,3 +494,291 @@ Incluye fecha de nacimiento guardada actualmente, alta en el sistema, decisiones
 La alimentación del lote indica su cantidad completa y no la atribuye al animal. Un gasto con varias atribuciones al mismo animal/casos se muestra una sola vez, indicando el porcentaje atribuible y el importe total del gasto; no se presenta ese importe completo como costo individual. Los eventos reemplazados se excluyen. El destete sustituye la etiqueta del pesaje asociado, usando las notas y autor del destete y su edad histórica, sin duplicar el evento. Una pauta de tratamiento se identifica como dosis indicada, sin afirmar aplicaciones de cada dosis.
 
 Las fechas clínicas se conservan como fechas del evento. El alta y los cambios de estado usan la fecha del registro UTC de sus fuentes y se identifican explícitamente; no se inventa una fecha clínica para reabrir/cambiar un caso. Cuando la fuente no conserva autor y no existe auditoría inicial, no se inventa un responsable. Los nombres y relaciones de catálogos son los actuales; esta vista reúne evidencia disponible, no reconstruye instantáneas históricas ausentes.
+
+### Observaciones vinculadas a casos sanitarios
+
+La migración nueva `0020_case_observations.sql` crea `health_case_observations` con observación, caso, usuario/rol que realiza el vínculo y fecha de creación. Se aplica al arrancar la API sin cambiar migraciones anteriores. Una observación de origen se vincula a un solo caso; un caso puede reunir varios hallazgos. El vínculo no modifica el texto, fecha, autor ni rol originales del evento de observación y no dispone de edición/eliminación desde la API.
+
+En **Sanidad → Casos y observaciones → Observaciones → Atender hallazgo**, elegir **Abrir caso nuevo** o **Vincular a caso existente**. El animal queda determinado por la observación. Crear exige fecha y motivo del caso; la apertura y el vínculo se guardan en una sola transacción. Los casos elegibles pertenecen al mismo animal y comienzan el mismo día o después del hallazgo de origen. Se puede vincular un caso cerrado sin reabrirlo. La fila vinculada muestra **Ver caso** y el detalle incluye **Hallazgos de origen**, con texto, fecha y autor originales. Una observación reemplazada no admite vínculos nuevos, pero los casos ya vinculados conservan su evidencia original.
+
+- `POST /api/v1/health/cases`: admite `observation_id` opcional, además de los campos existentes. Sin esa propiedad conserva el flujo independiente.
+- `GET /api/v1/health/observations/{observation_id}/case-options?q=&limit=100`: casos del mismo animal elegibles por fecha, búsqueda por motivo y máximo 100 resultados; requiere `health:read`.
+- `POST /api/v1/health/observations/{observation_id}/case-link`: `{"case_id":"UUID"}`; requiere `health:write`. Repetir el mismo vínculo es idempotente, sin duplicar auditoría; cambiarlo a otro caso devuelve 409.
+
+Las observaciones del listado e historial incluyen `health_case` (`null` cuando no está vinculada). El detalle del caso añade `observations`. El historial integral identifica el caso vinculado en el hallazgo efectivo. Se validan animal, fecha y observación no reemplazada bajo bloqueo del animal; el identificador de observación es clave primaria del vínculo para impedir duplicados. Los vínculos generan auditoría en el módulo Sanidad. No se asocian retrospectivamente observaciones por coincidencias de texto o fecha.
+
+### Bitácora de dosis realmente aplicadas
+
+La migración `0021_treatment_doses.sql` crea registros independientes de la pauta de `event_treatments`, vinculados por su clave compuesta de evento y producto. No se generan dosis retrospectivas ni se interpreta una pauta como prueba de administraciones realizadas. La migración se aplica automáticamente al arrancar la API y no modifica archivos anteriores.
+
+En **Sanidad → Ver caso → Tratamientos → Dosis aplicadas**, consultar la bitácora y usar **Registrar dosis aplicada**. Se captura fecha/hora local, persona que la aplicó, cantidad, unidad, vía y notas. El responsable es un nombre declarado para la aplicación; el usuario y rol que capturan el registro se obtienen de la sesión y se conservan por separado. La persona responsable se propone inicialmente con el nombre del usuario y puede cambiarse para registrar quién realmente aplicó la dosis. El historial sanitario permite consultar la bitácora sin editarla. También puede capturarse desde el historial de tratamientos de un programa sanitario. Los casos cerrados exigen reapertura antes de agregar aplicaciones, como los demás registros clínicos.
+
+Endpoints de lectura/escritura: `GET/POST /api/v1/health/treatments/{event_id}/products/{product_id}/doses`, con `health:read` y `health:write`, respectivamente. GET tiene `offset`, `limit` (máximo 100) y total. POST recibe `applied_at` con zona horaria, `administered_by`, `dose_value`, `dose_unit_id`, `route_id` y `notes` opcionales. No admite identificadores de autor, rol ni animal proporcionados por el cliente. La pauta original no cambia. No hay PUT ni DELETE.
+
+Se guardan el instante UTC, la fecha local y el desplazamiento horario declarado; la interfaz muestra el horario original de aplicación. No se permiten instantes futuros, cantidades no positivas o con más de tres decimales, aplicaciones anteriores al nacimiento/inicio del caso, posteriores a una salida o en tratamientos reemplazados. El mismo tratamiento/producto no admite dos registros para el mismo instante UTC, aunque se envíen zonas horarias diferentes. Las variaciones de fecha respecto al período indicado, cantidad, unidad o vía requieren explicación; se conservan como hechos observados y no alteran la indicación original ni constituyen autorización de una pauta nueva.
+
+Los registros generan auditoría y aparecen como **Dosis aplicada** en el historial integral con su persona responsable y capturista. Se impide cambiar el nacimiento, fechar una salida o cerrar el caso de manera que contradiga aplicaciones existentes. El retiro utiliza estas aplicaciones reales y conserva las variaciones como **Por verificar**. Los tratamientos previos sin dosis muestran únicamente la pauta como referencia y no presentan una fecha de retiro confirmada. El punto 4 del inventario está terminado; ver Retiro sanitario para las reglas del cálculo.
+
+
+### Alergias y reacciones adversas
+
+**Sanidad → Alergias y reacciones → Registrar reporte** guarda la fecha observada, animal, tipo (`suspected_allergy` o `adverse_reaction`), descripción y agente sospechado opcional. Producto y dosis aplicada son vínculos opcionales: no se exige inventar una causa, un medicamento ni una aplicación. La relación no confirma causalidad. La búsqueda de dosis está paginada, se limita al animal/producto seleccionado y conserva aplicaciones de pautas reemplazadas; se permiten referencias históricas a productos inactivos.
+
+`0022_animal_reactions.sql` se aplica al iniciar la API y crea `animal_reactions`, con autor, rol y fecha de captura. No cambia migraciones anteriores. Endpoints:
+
+- `GET /api/v1/health/reactions`: búsqueda por nombre/SINIIGA (`q`), animal (`animal_id`), seguimiento (`status=open|closed`) y paginación (`offset`, `limit`, máximo 100). Requiere `health:read`.
+- `GET /api/v1/health/reactions/dose-options?animal_id=...`: dosis reales del animal, con filtro opcional `product_id` y paginación. Requiere `health:read`.
+- `POST /api/v1/health/reactions`: requiere `health:write`; campos `animal_id`, `date`, `kind`, `description`, `suspected_agent?`, `product_id?`, `dose_id?`. Una dosis determina el producto cuando este se omite; se rechazan animales/productos diferentes y fechas anteriores a la dosis.
+- `POST /api/v1/health/reactions/{id}/closure`: `date` y `notes` obligatorios, con `health:write`. Cierra el seguimiento una sola vez, conservando el reporte original; un segundo cierre devuelve 409. Guarda autor/rol/fecha del cierre y auditoría. No permite editar ni borrar el reporte original.
+
+El antecedente permanece visible, abierto o cerrado, en la ficha del animal, el detalle/historial sanitario y la captura de aplicaciones de programas. El panel muestra los cinco reportes más recientes y enlaza a la consulta paginada del animal. Solo consulta información con `health:read`. El historial integral incorpora reporte y cierre como hechos separados, sujetos a ese permiso; la auditoría los clasifica en Sanidad. Los nombres de personas/productos se resuelven con el catálogo actual; texto, fecha, vínculos y autores identificados se conservan en el reporte y su auditoría.
+
+Se rechazan reportes futuros, anteriores al nacimiento o posteriores a una salida. Cambiar el nacimiento o fechar una salida no puede contradecir reportes existentes. El cierre administrativo sí puede ser posterior a la salida. Cerrar un seguimiento no confirma que una alergia haya desaparecido, y no tener reportes no confirma ausencia de alergias. Esta función registra antecedentes; no prescribe tratamientos ni modifica automáticamente las pautas o el retiro sanitario.
+
+
+### Incidentes extraordinarios por animal
+
+**Sanidad → Incidentes → Registrar incidente** captura un hecho por animal: accidente, aborto reportado, ataque, intoxicación reportada, desaparición u otro incidente. Requiere fecha y descripción; lugar reportado, acciones iniciales y caso sanitario son opcionales. Un vínculo a caso debe pertenecer al mismo animal. El registro no confirma diagnósticos, no modifica montas/gestaciones/partos y no crea una salida del hato. Un reporte de aborto requiere una hembra; impide cambiar posteriormente su sexo a macho mientras exista ese antecedente.
+
+La migración automática `0023_animal_incidents.sql` crea `animal_incidents` e `incident_followups`, sin modificar migraciones anteriores. Endpoints:
+
+- `GET /api/v1/health/incidents`: búsqueda por nombre/SINIIGA (`q`), animal (`animal_id`), tipo (`kind`), estado (`status=open|in_progress|closed`) y paginación (`offset`, `limit`, máximo 100).
+- `GET /api/v1/health/incidents/case-options?animal_id=...`: casos del mismo animal, búsqueda por motivo (`q`) y límite máximo 100; permite referencias a casos abiertos o cerrados.
+- `GET /api/v1/health/incidents/{id}`: reporte original, estado vigente, versión, fecha del último seguimiento y seguimientos paginados, del más reciente al más antiguo.
+- `POST /api/v1/health/incidents`: `animal_id`, `date`, `kind`, `description`, `location?`, `initial_actions?`, `health_case_id?`. Tipos en inglés: `accident`, `abortion`, `attack`, `poisoning`, `disappearance`, `other`.
+- `POST /api/v1/health/incidents/{id}/followups`: `date`, `notes`, `status`, `expected_version` y caso opcional `health_case_id`. Conserva cada nota, autor, rol y estado al registrar. Permite cerrar o reabrir con explicación; un seguimiento nuevo incrementa la versión. Una versión desactualizada devuelve 409 para evitar sobrescribir el trabajo de otra persona.
+
+Las lecturas requieren `health:read`; las capturas, `health:write`. No existen endpoints para editar o eliminar el reporte original o sus notas. El estado vigente y la versión son metadatos actualizados bajo bloqueo del animal/incidente; cada cambio tiene su seguimiento y auditoría. La auditoría clasifica ambas tablas en Sanidad. Los nombres de autores/casos se resuelven con los catálogos actuales; los identificadores, fechas y textos originales se conservan.
+
+Las fechas del reporte no pueden ser futuras, anteriores al nacimiento ni posteriores a una salida. Nacimiento y salida tampoco pueden modificarse de forma que contradigan un incidente existente. Los seguimientos no retroceden respecto del último registro y pueden continuar administrativamente después de la salida, sin crear actividad clínica. Un caso relacionado puede vincularse desde el reporte inicial o en una nota posterior, sin cambiar el estado del caso sanitario.
+
+La ficha del animal y el detalle/historial sanitario muestran los cinco incidentes más recientes, incluidos los cerrados, con enlace a la lista filtrada. El historial integral muestra reporte y seguimientos como hechos separados sujetos al permiso de Sanidad. La tabla de incidentes permite buscar y filtrar, y Ver incidente permite añadir notas, cerrar y reabrir conservando la historia.
+
+
+### Evaluaciones físicas descriptivas
+
+**Animales → Evaluaciones físicas → Registrar evaluación** guarda animal, fecha, persona que evaluó y observaciones por apartado. El documento del proyecto menciona conformación/características físicas sin definir una escala: esta primera versión utiliza criterios descriptivos explícitos (`descriptive_v1`), sin calificación global, ranking, pureza racial ni valor genético inferidos.
+
+Los apartados son estructura corporal (`body_structure`), patas y aplomos (`limbs_hooves`), desplazamiento (`movement`) y capa/pelaje (`coat_features`). Cada uno muestra su definición al capturar. Se exige al menos una observación; los apartados vacíos quedan como **Sin evaluar**, sin inventar valores cero. Son descripciones observadas, no un estándar racial ni una escala clínica. Una escala numérica futura requiere definir criterios, niveles y significado antes de implementarla.
+
+La migración automática `0024_physical_evaluations.sql` crea `physical_evaluations`. Guarda una instantánea de código, etiqueta, definición y observación de los cuatro apartados, junto con su versión. También conserva evaluador declarado, capturista autenticado, rol y fecha de registro. La auditoría clasifica estos registros en Animales. Los nombres actuales del animal y capturista se resuelven con sus catálogos; el evaluador declarado, fecha, textos y definiciones se conservan.
+
+Endpoints:
+
+- `GET /api/v1/physical-evaluations/criteria`: versión, modalidad descriptiva y definiciones de los apartados.
+- `GET /api/v1/physical-evaluations/animal-options`: animales activos, con búsqueda `q` y límite máximo 100.
+- `GET /api/v1/physical-evaluations`: lista paginada por nombre/SINIIGA (`q`) o animal (`animal_id`), con `offset` y `limit` máximo 100. Incluye observaciones e instantáneas para consultar cada evaluación.
+- `POST /api/v1/physical-evaluations`: `animal_id`, `date`, `evaluated_by`, `rubric_version`, `findings` (objeto con las cuatro claves anteriores y textos o null) y `notes?`. La versión debe coincidir con los criterios vigentes; una versión distinta devuelve 409.
+
+Las lecturas requieren `animals:read`; la captura, `animals:write`. No se aceptan puntuaciones, identificadores de autor/rol enviados por el cliente, observaciones totalmente vacías, fechas futuras, anteriores al nacimiento o posteriores a una salida. Cambiar nacimiento o fecha de salida tampoco puede contradecir evaluaciones existentes. No hay edición ni eliminación: una revisión posterior es otro registro, sin borrar la anterior.
+
+La ficha del animal permite desplegar las cinco evaluaciones más recientes y abrir la lista filtrada para consultar todas. El historial integral incorpora cada evaluación en Datos y decisiones, con evaluador y observaciones, y conserva los apartados sin evaluar explícitos. Las evaluaciones no modifican decisiones reproductivas, genealogía ni pesos.
+
+
+### Habilidad materna y observaciones de las crías
+
+**Reproducción → Evaluaciones maternas y de crías → Registrar evaluación** vincula la revisión a un parto registrado. Primero se busca el parto por madre/SINIIGA, se selecciona el tipo y, si corresponde, una cría de ese nacimiento. El parto determina la madre; el servidor valida la pertenencia de la cría. La búsqueda de partos está paginada e incluye partos históricos; excluye registros sustituidos para nuevas capturas.
+
+La primera versión `breeding_descriptive_v1` es descriptiva, sin calificación global ni inferencia genética. Los criterios maternos son aceptación de las crías (`acceptance`), amamantamiento observado (`nursing`) y cuidado/atención (`care`). Para una cría son características físicas visibles (`body_features`), desplazamiento (`movement`) y desarrollo observado (`development`). El formulario explica cada criterio y exige describir al menos uno; los demás quedan **Sin evaluar**. Amamantamiento observado no determina cantidad/calidad de leche, y los rasgos visibles no confirman herencia ni pureza. Los pesos medidos y la evolución clínica siguen en sus módulos.
+
+`0025_breeding_assessments.sql` crea `breeding_assessments` al iniciar la API. Guarda parto, animal evaluado, madre, padre conocido de la cría (cuando corresponda), tipo, fecha, evaluador declarado, capturista autenticado, rol, observaciones y versión. Cada registro conserva instantáneas de etiqueta, definición y observación de sus criterios. No permite edición ni borrado; una revisión posterior crea una evaluación nueva. Nombres actuales de animales/capturista se consultan de sus catálogos; texto y definiciones se conservan. Las observaciones maternas no se atribuyen al macho.
+
+Endpoints con `breeding:read`:
+
+- `GET /api/v1/breeding/assessments/criteria?kind=maternal|offspring`: criterios/versiones del tipo.
+- `GET /api/v1/breeding/assessments/birth-options`: partos paginados por `q`, `offset`, `limit`; devuelve madre y crías registradas con indicador de vida al nacer.
+- `GET /api/v1/breeding/assessments`: lista paginada con búsqueda por madre o animal evaluado (`q`), tipo (`kind`), parto (`birth_event_id`) y contexto de animal (`animal_id`). Este último incluye sus evaluaciones, observaciones de sus crías conocidas y, para la madre, sus evaluaciones maternas.
+
+`POST /api/v1/breeding/assessments` requiere `breeding:write`: `birth_event_id`, `kind`, `offspring_id` solo para tipo offspring, `date`, `evaluated_by`, `rubric_version`, `findings` (claves del tipo y textos/null), `notes?`. Rechaza criterios desconocidos, puntuaciones, autor/rol enviados por el cliente, apartados completamente vacíos, versiones desactualizadas, partos sustituidos, crías ajenas, fechas futuras o anteriores al parto y evaluaciones posteriores a la salida del animal evaluado. Un padre que haya salido no impide evaluar posteriormente a su cría que permanece en el hato. Los controles de nacimiento y salida respetan el historial de evaluaciones del sujeto.
+
+La ficha despliega las cinco evaluaciones más recientes del animal y sus descendientes, con enlace a la lista filtrada; requiere permiso reproductivo. Desempeño incluye Ver evaluaciones en cada reproductor, con filtro por ese animal. Cada registro identifica claramente cuál fue el animal evaluado. El historial integral las incluye en Reproducción para el sujeto y los progenitores conocidos; no las expone con solo permiso de Animales. La auditoría las clasifica en Reproducción. Una evaluación asociada a un parto sustituido permanece consultable como antecedente y lo señala; no se borra. No modifica montas, gestaciones, partos, pesos ni decisiones reproductivas automáticamente.
+
+
+### Indicadores reproductivos con bases explícitas
+
+**Reproducción → Indicadores** consulta hembras con reproducción/descendencia registrada o marcadas reproductoras. También se abre desde **Desempeño → Ver indicadores** por hembra. Es una consulta de solo lectura con `breeding:read`, sin migración nueva ni registros de auditoría por consultar.
+
+`GET /api/v1/breeding/indicators` admite `q` (nombre/SINIIGA), `animal_id`, `date_from`, `date_to`, `as_of` (por defecto hoy), `age_days` (1–730, por defecto 60), `offset` y `limit` (máximo 100). `date_from ≤ date_to ≤ as_of ≤ hoy` cuando se proporcionan límites. El resumen comprende todas las hembras filtradas y todas las páginas; promedios y porcentajes se calculan con sumas de sus bases, nunca promediando porcentajes individuales. El indicador no reconstruye la composición histórica del hato: usa la genealogía actual y la historia efectiva actual, filtrada por fecha. Sustituciones posteriores conocidas pueden retirar evidencia anterior incluso si se consulta un corte pasado.
+
+Reglas:
+
+- **Entre partos registrados:** diferencia de días entre partos efectivos consecutivos de la hembra. Se incluye el par cuando el segundo parto está en el periodo; conserva el predecesor aunque quede antes del inicio. No hay intervalo sin dos registros. Expone cantidad, suma de días, promedio, mínimo y máximo. No presupone partos faltantes.
+- **Montas con diagnóstico gestante:** selecciona montas del periodo; para cada una utiliza el último diagnóstico efectivo vinculado al mismo animal hasta `as_of`, incluso si fue posterior a `date_to`. La proporción es `gestantes / (gestantes + vacías) × 100`. Dudosos y montas sin diagnóstico se muestran aparte y se excluyen del denominador. Diagnósticos sin vínculo válido a una monta se cuentan por fecha del diagnóstico en el periodo, sin atribuirlos a una monta. Es una proporción de resultados registrados, no una tasa de fertilidad biológica, concepción o éxito por ciclo.
+- **Monta a primer diagnóstico gestante vinculado:** días entre la monta seleccionada y su primer diagnóstico gestante efectivo hasta el corte, con número de observaciones. Puede existir un primer positivo histórico aunque el último diagnóstico sea diferente. No es duración de gestación ni fecha de concepción. Sin identificación fiable de ciclos, no se inventan intervalos entre gestaciones distintas a partir de diagnósticos repetidos.
+- **Sin muerte registrada a una edad:** selecciona descendientes por nacimiento dentro del periodo; una condición al nacer conocida exige vínculo a un parto efectivo. Usa la fecha del parto cuando esa evidencia existe; para genealogía manual usa fecha de nacimiento actual, conservando la condición desconocida. Solo nacidos vivos conocidos que cumplen la edad al corte pueden entrar al denominador. Una muerte o sacrificio efectivo hasta el día objetivo inclusive es desenlace registrado; una venta u otra salida hasta ese día es seguimiento incompleto y se excluye. Sin salida hasta ese día, se clasifica Sin muerte registrada. Una muerte/salida posterior no reescribe el desenlace a una edad anterior. La proporción es `sin muerte registrada / (sin muerte registrada + muertes o sacrificios) × 100`, sin asumir seguimiento después de una salida. No confirma supervivencia real ni estima una curva estadística de supervivencia.
+
+Sin denominador o sin pares, se devuelve null y se muestra **Sin base**, distinto de 0 %. Se detallan nacidos sin vida, condición al nacer desconocida, falta de fecha, crías aún sin edad y salidas tempranas. Sin límites de periodo se incluyen registros manuales sin fecha como categoría explícita; con límites quedan fuera de la cohorte porque no se pueden situar en el periodo.
+
+`GET /api/v1/breeding/indicators/{animal_id}/details` requiere una hembra y los mismos filtros de periodo/corte/edad; `section=birth_intervals|matings|offspring` selecciona el detalle paginado. La interfaz conserva los filtros aplicados al abrir el cálculo, aunque se hayan editado campos sin pulsar Calcular. Las listas permiten verificar las fechas, el resultado vinculado y las exclusiones. No modifica el reporte anterior de Desempeño ni las capturas reproductivas.
+
+
+### Salud registrada de las crías en Desempeño
+
+**Reproducción → Desempeño** integra casos sanitarios de descendientes tanto para hembras como para machos. Con permisos `breeding:read` y `health:read` muestra crías con/sin casos registrados, total de casos y distribución entre abiertos, en tratamiento y cerrados. Una cría con varios casos cuenta una sola vez como descendiente con casos; cada caso conserva su propio conteo. El resumen usa todos los progenitores filtrados, no únicamente la página visible.
+
+Desde **Ver crías → Ver casos sanitarios** se despliega el motivo, estado, fecha de inicio/cierre y enlace **Ver caso** al detalle sanitario existente. La consulta está paginada (10 por defecto, máximo 100) y se hace solo al desplegar; incluye casos de animales que ya salieron y los cerrados. No modifica casos ni genera auditoría por consultar.
+
+El periodo de Desempeño selecciona descendientes por nacimiento, según la genealogía actual. Sus casos se consultan hasta hoy y sus estados son los actuales; no se filtran por la fecha de inicio del caso ni se reconstruye su estado anterior al periodo. Por eso un caso posterior al periodo de nacimientos puede aparecer como seguimiento de esa cohorte. Los descendientes sin nacimiento conocido se incluyen solo sin límites de periodo, como en el reporte existente. Cero casos significa **Sin casos registrados**, sin afirmar que la cría está sana. Los conteos no establecen herencia, causalidad ni valor genético.
+
+Las respuestas de `/api/v1/breeding/performance` añaden `health_summary` y `items[].health` solo si el usuario tiene `health:read`. El detalle de descendientes añade `parent.health` e `items[].health` bajo la misma condición. Sin ese permiso, los campos se omiten por completo y no se ejecuta la consulta de conteos sanitarios; Reproducción sigue disponible con su permiso propio.
+
+`GET /api/v1/breeding/performance/{parent_id}/offspring/{child_id}/health-cases` exige ambos permisos. Valida la relación madre/padre actual, el periodo de nacimientos (`date_from`, `date_to`), la fecha no futura del descendiente y la paginación. Una cría ajena o fuera de cohorte devuelve 404, y falta de permisos devuelve 403. Solo entrega resúmenes de los casos de esa cría, con enlace para consultar su detalle en Sanidad. No requiere migración nueva.
+
+### Decisiones vigentes de manejo
+
+Animales → Decisiones vigentes consulta `GET /api/v1/management-decisions` con `animals:read`, búsqueda, tipo de decisión, sexo, estado y paginación. La última decisión de conservar para reproducción, descartar para reproducción, separar o prever venta reemplaza el plan anterior según fecha clínica, fecha de captura e ID descendentes. Las notas de compra y otras decisiones no lo reemplazan. El filtro por tipo se aplica después de seleccionar la vigente. Los totales corresponden a todos los animales filtrados.
+
+La vista muestra contexto **actual**, no una fotografía al tomar la decisión: casos sanitarios/retiro con `health:read`, montas/partos/último diagnóstico posterior al parto con `breeding:read`. Sin esos permisos, los campos se omiten. El historial individual conserva todas las decisiones y permite registrar otro criterio desde la ficha; no se modifican automáticamente reproductores, lotes ni salidas. Los animales con salida aparecen sólo al ampliar el filtro, como antecedentes. No necesita migración nueva.
+
+### Venta por kilogramo con pesaje vinculado
+
+1. En Manejos → Pesajes registra el peso real del animal el día de la venta, antes de registrar la salida.
+2. En Salidas registra la venta con esa misma fecha.
+3. En Economía → Ingresos → Registrar ingreso selecciona Venta por kilogramo, la salida, el pesaje y el precio por kg en MXN. La fecha del ingreso puede ser posterior a la salida.
+
+`GET /api/v1/finance/sales/{exit_id}/weights` muestra los pesajes efectivos del mismo animal y día de salida; requiere `finance:read`, como evidencia de la venta. Al guardar un ingreso con `pricing_mode=per_kg`, `exit_event_id`, `weight_event_id` y `price_per_kg`, el servidor calcula `peso × precio`, redondeado `ROUND_HALF_UP` a dos decimales. `amount` puede omitirse; si se envía, debe coincidir. No utiliza el último pesaje de otro día ni acepta uno reemplazado. El total conserva el límite decimal de ingresos.
+
+La migración nueva `0026_sale_weight_pricing.sql` se aplica automáticamente al iniciar la API; no modifica migraciones anteriores ni ingresos por importe total. El ingreso guarda el ID de pesaje y una copia del peso/precio utilizados. El detalle y Excel de ingresos incluyen el desglose. Los totales existentes siguen sumando `incomes.amount` una sola vez. Ediciones financieras explícitas conservan antes/después en auditoría y vuelven a validar el pesaje; cambiar a importe total elimina el desglose actual, conservando el anterior en auditoría. No ejecuta una salida automáticamente.
+
+Verificación local: pruebas SQLite de cálculo, vínculos, redondeo, duplicados, permisos, auditoría, reportes y compatibilidad; pruebas del formulario, compilación y revisión visual con API simulada en escritorio/móvil. La ejecución real de la migración en MySQL requiere el entorno de integración separado; no se verificó contra Aiven.
+
+### Principios activos y composición de productos
+
+Sanidad → Principios activos permite consultar, buscar, crear y corregir nombres y eliminar entradas sin productos vinculados. Cuenta productos activos e inactivos; los nombres son únicos sin distinguir mayúsculas y se recortan espacios exteriores. Usa `GET/POST /api/v1/health/ingredients` y `PUT/DELETE /api/v1/health/ingredients/{id}` con permisos `health:read`/`health:write`. Creación, corrección, eliminación y asignaciones generan auditoría.
+
+En Productos, crear/editar permite seleccionar varios principios activos y agregar uno al catálogo desde el mismo formulario. Crear inline guarda inmediatamente la entrada del catálogo; su asignación se confirma con Guardar producto. El listado muestra nombres o Sin principios activos registrados. Se trata de composición **actual** del catálogo; no registra concentración ni infiere composición histórica, dosis, interacciones o causalidad de una reacción. Renombrar una entrada actualiza su nombre mostrado en todos los productos vinculados; el valor anterior queda en auditoría.
+
+`ProductInput.ingredient_ids` admite hasta 100 identificadores positivos y únicos: omitirlo o enviar `null` preserva las asignaciones de un producto existente; `[]` las elimina explícitamente. La API valida existencia y bloquea entradas al asignar/eliminar. `ProductResponse.ingredients` entrega ID y nombre de la composición actual. Las tablas `active_ingredients` y `product_ingredients` ya existen en la migración inicial, por lo que no hay migración nueva.
+
+### Precios históricos y costo calculado de aplicaciones
+
+Productos muestra precio vigente para usuarios con `health:read` y `finance:read`. Al crear un producto, el precio inicial es opcional en el mismo formulario; requiere `finance:write` y se guarda en la misma transacción del producto. El botón Historial de precios permite consultar vigencias y agregar una fecha/costo por **1 unidad del producto**, en MXN con dos decimales. Por ejemplo, para unidad ml se captura costo por ml, no por frasco. Precios futuros quedan programados y no reemplazan el vigente antes de su fecha. Las vigencias no se sobrescriben ni eliminan; fechas duplicadas se rechazan con 409 y auditoría conserva cada alta. La unidad del producto no puede cambiar si existen precios. El formulario envía la unidad esperada para detectar cambios concurrentes anteriores al primer precio.
+
+`GET/POST /api/v1/health/products/{id}/prices`: lectura con `health:read` + `finance:read`; alta con `health:read` + `finance:write`. `ProductInput.initial_price` admite `effective_from` y `cost` para altas de productos; actualizar un producto exige usar el historial para nuevas vigencias. El listado omite `current_price` sin permiso financiero. Reutiliza `product_prices`, existente en la migración inicial: no hay migración nueva.
+
+En tratamientos de casos, historial y programas, Dosis aplicadas → Costo de aplicaciones consulta `GET /api/v1/health/treatments/{event_id}/products/{product_id}/cost`, con lectura sanitaria y financiera. Valora cada aplicación real usando su **fecha clínica local guardada**, cantidad aplicada y último precio vigente anterior o igual a esa fecha. Sólo calcula si el ID de unidad de dosis coincide con el del producto; no convierte unidades ni estima cantidades desde frecuencia/duración de la pauta. Mantiene cero conocido distinto de precio faltante. Redondea cada aplicación a centavos (`ROUND_HALF_UP`) y suma esos costos. El resumen incluye todas las aplicaciones del tratamiento/producto aunque el detalle esté paginado.
+
+Sin aplicaciones no hay costo total determinado; con faltantes se muestra subtotal conocido y cantidad sin determinar. Es valoración de material según precios registrados, no factura, gasto pagado ni costo integral (no incluye mano de obra u otros conceptos). Agregar una vigencia pasada puede cambiar cálculos al consultarlos nuevamente; no se afirma un precio histórico que no se haya registrado. No genera gastos ni modifica las dosis.
+
+### Reparto calculado de costos de lote entre animales
+
+Economía → Costos por animal o lote → Consultar costos → Reparto calculado de lotes. Se consulta para un lote o para un animal y el mismo rango de fechas aplicado. Por animal muestra las partes que le corresponden por sus pertenencias históricas; por lote muestra todos sus destinatarios. Origen del reparto permite abrir el detalle paginado de cada gasto/consumo y verificar miembros e importes.
+
+Criterio fijo y explícito: reparto igual entre miembros del lote **en la fecha de cada registro**, con entrada y salida de pertenencia inclusivas. Una baja permite actividad el mismo día, pero excluye días posteriores; se excluyen fechas anteriores a un nacimiento conocido. Identificadores duplicados de un mismo animal se cuentan una vez por fuente. Los cambios de lote posteriores no eliminan pertenencias anteriores. No reparte por peso, horas, días de un periodo de cobertura, ni presume consumo individual: los gastos no tienen un periodo de cobertura definido.
+
+Para un gasto, primero se calcula sólo la porción realmente asignada al lote con la política de centavos existente sobre todas las asignaciones del gasto. Después reparte esa porción entre los miembros elegibles, dividiendo centavos enteros y asignando sobrantes por ID de animal ascendente. Nunca vuelve a repartir el gasto completo si sólo parte corresponde al lote. Para alimentación usa el costo conocido del consumo del lote con su precio histórico vigente y redondeo por consumo, y reparte ese costo; no registra cantidades individuales.
+
+Gastos y alimentación permanecen separados: pueden representar la misma compra y no se suman como si fueran costos diferentes. Sin miembros, el importe queda sin repartir y se muestra explícito; sin precio, no se inventa un valor ni se presenta como costo completo. El resumen corresponde a todos los resultados, no sólo a la página. En modo animal, `attributed_expenses` y `attributed_feeding` corresponden sólo al animal consultado; los campos `source_*` describen los importes completos de sus fuentes de lote relacionadas. Sin `feeding:read` se omiten fuentes/importes de alimentación.
+
+`GET /api/v1/finance/group-costs` requiere `finance:read`; parámetros `kind=animal|group`, `target_id`, `date_from`, `date_to`, `view=animals|sources`, `offset`, `limit`. `GET /api/v1/finance/group-costs/sources/{expense|feeding}/{source_id}` pagina los miembros del registro; para gasto usa el ID de su asignación, no el ID del gasto. Alimentación requiere además `feeding:read`. Sólo se consideran fuentes hasta la fecha actual.
+
+El cálculo es de consulta y usa los datos históricos disponibles actualmente: cambiar asignaciones, pertenencias o precios puede cambiarlo. No crea gastos, no altera porcentajes ni saldos, y no guarda una distribución irreversible. Reutiliza tablas existentes sin migración nueva. No se mezcla con los totales directos de la vista anterior.
+
+### Resultado individual y costo integral registrado
+
+Economía → Resultado por animal reúne ingresos y gastos registrados atribuibles. Base financiera: `ingresos vinculados − gastos registrados atribuidos`, incluidos costo directo del animal, partes asignadas a sus casos sanitarios y partes calculadas de gastos del lote según pertenencias históricas. La suma conserva centavos. Compras de alimento y medicamentos son gastos cuando se registran como tales; alimentación y aplicaciones reales valoradas son **referencias separadas** y no se deducen otra vez. Se comparte la valoración de dosis con el historial sanitario.
+
+El periodo corresponde a la fecha elegida del ingreso/gasto; referencias usan fecha de consumo/aplicación. Sin fechas se consulta hasta hoy; el corte de estado usa Hasta o la fecha actual. Nacimiento conocido posterior al corte se identifica, sin clasificarlo como activo o salido en esos filtros. Conserva animales con salida para sus ingresos posteriores. Ventas se atribuyen por el evento original vinculado, incluso si se sustituye su historial operativo: no se borra un ingreso financiero por reemplazar un evento.
+
+Cobertura muestra gastos generales sin asignación, residuos y partes de lote sin miembros como pendientes. No los distribuye arbitrariamente. Desde Gastos pendientes de atribuir se abre el editor existente y al guardar se recalcula. Ingresos sin animal abre el ingreso exacto en Economía para vincularlo a una venta o directamente a un animal. Cobertura abarca todo el rancho para el periodo; búsqueda/estado afectan filas y resumen de animales. Totales abarcan todas las páginas.
+
+La migración nueva `0027_income_animal.sql` agrega `incomes.animal_id` opcional con FK y restricción que impide usarlo simultáneamente con una salida. `IncomeInput.animal_id` atribuye el importe completo de un ingreso sin venta a un animal existente; rechaza fechas anteriores a su nacimiento conocido. La fecha financiera puede ser posterior a su salida. Listado, detalle, Excel e historial integral muestran el vínculo y auditoría conserva las ediciones. Los registros anteriores permanecen sin cambios. La migración se aplica al iniciar la API y no modifica migraciones aplicadas.
+
+APIs con `finance:read`: `GET /api/v1/finance/profitability` (q, status, date_from/to, offset/limit), `/profitability/pending?kind=expenses|incomes`, `/profitability/{animal_id}/entries?section=incomes|expenses|feeding|medicines` y `/incomes/{id}`. Secciones de referencia requieren `feeding:read` o `health:read`; se omiten sin esos permisos. Escribir vínculos/porcentajes requiere `finance:write`. Consultar no crea movimientos ni auditoría.
+
+Integra registros financieros atribuidos, incluidos generales una vez asignados. No presume inventarios, depreciación, trabajo, compra del animal ni costos ausentes; no certifica utilidad final ni costo devengado. Cambios de asignación, pertenencia, importes o precios pueden cambiar consultas posteriores. La prueba manual del reparto con importes fue aplazada por el usuario y queda como revisión operativa pendiente.
+
+
+### Permisos sanitarios por acción
+
+La migración `0028_health_action_permissions.sql` reemplaza `health:write` por acciones explícitas, conservando los accesos completos que ya tenía cada rol (incluidos los personalizados). No modifica migraciones previas ni concede Sanidad a roles que no la tenían. Se aplica automáticamente al iniciar la API. Recarga el frontend o vuelve a iniciar sesión para obtener los permisos nuevos.
+
+Cada acción requiere `health:read`; la API rechaza un rol con acciones sin consulta. Roles activa la consulta al marcar una acción y retira sus acciones al desmarcar la consulta. El permiso general anterior deja de aceptarse al crear/editar roles. Los permisos se consultan desde la base en cada petición, por lo que retirarlos afecta también a tokens ya emitidos.
+
+| Permiso | Acciones |
+| --- | --- |
+| `health:observations:create` | Registrar observaciones |
+| `health:cases:write` | Abrir casos, vincular hallazgos y cambiar estado |
+| `health:diagnoses:create` | Registrar diagnósticos |
+| `health:treatments:create` | Indicar pautas de tratamiento |
+| `health:doses:create` | Registrar dosis realmente aplicadas |
+| `health:followups:create` | Registrar evolución y revisiones |
+| `health:products:write` | Administrar productos y principios activos |
+| `health:programs:write` | Crear/editar programas sanitarios |
+| `health:program_applications:create` | Registrar pautas de programas; no crea dosis reales |
+| `health:reactions:write` | Registrar/cerrar antecedentes de reacciones y alergias |
+| `health:incidents:write` | Registrar incidentes y seguimientos |
+
+Los precios conservan sus permisos financieros adicionales. No se presupone autorización profesional por el nombre del rol: el dueño selecciona las responsabilidades. Indicar un tratamiento no concede permiso para registrar dosis y registrar dosis no permite indicar tratamientos. Los permisos restantes por módulo conservan su alcance.
+
+Prueba manual sugerida: en Roles edita Trabajador, conserva sus permisos ajenos a Sanidad, habilita solo consultar Sanidad y registrar observaciones, guarda y entra con una cuenta de ese rol. Debe aparecer Observación y no Abrir caso ni las acciones de diagnóstico/tratamiento/dosis. Después prueba esos permisos individualmente según las responsabilidades reales de cada cuenta.
+
+
+### Rectificación del historial sin borrar el original
+
+Animales → Ver ficha → Historial completo → Rectificar registro. La migración nueva `0029_history_rectifications.sql` crea un historial inmutable de rectificaciones: motivo obligatorio (10–2000 caracteres), autor y rol conservados, fecha UTC, versión, instantánea del origen y datos corregidos cuando hay sustitución. El permiso independiente `history:rectify` se concede inicialmente solo al dueño del sistema; los demás roles necesitan asignación explícita. También se exigen lectura de Animales, lectura del módulo y su autorización de captura específica (incluidas las acciones sanitarias separadas).
+
+Hay dos modos deliberadamente distintos:
+
+- **Agregar aclaración:** disponible para todas las fuentes visibles del historial de ese animal. Conserva una explicación (10–5000 caracteres) junto al origen. No modifica importes, fechas, cantidades, estados ni cálculos. Para registros de lote compartidos, la nota pertenece al historial del animal seleccionado, no a todos sus miembros.
+- **Sustituir con datos corregidos:** pesajes ordinarios sin vínculo a venta/destete, observaciones sin vínculo a caso y diagnósticos de casos abiertos. Usa los validadores/repositorios de captura existentes y crea otro evento con `replaced_event_id`; nunca cambia el original. Mantiene el mismo animal y, para diagnósticos, el mismo caso. Lecturas sanitarias, crecimiento, reportes de pesajes y opciones de venta usan los eventos efectivos. Los pesos que respaldan ventas o destetes solo admiten aclaración. No se corrigen automáticamente dosis reales, retiros, finanzas, partos, salidas u otros hechos mediante una nota.
+
+Cada alta requiere la versión y hash de la fuente consultada. Se serializa con escrituras del animal, se detectan ventanas desactualizadas y la clave única impide duplicar la misma versión. Al sustituir se conservan todos los antecedentes de la cadena, con el texto/peso anterior, datos nuevos, motivo y responsable. La UI permite consultarlos sin el permiso especial siempre que la cuenta conserve las lecturas del área; no expone fuentes sanitarias con solo permiso de Animales. La auditoría clasifica la rectificación según el módulo de origen. No hay endpoints de edición ni borrado de rectificaciones.
+
+API: `GET /api/v1/animals/{animal_id}/rectifications?entry_id=...` obtiene contexto, instantánea, permisos y versiones; `POST` crea una aclaración o sustitución. `entry_id` procede del historial, no de texto libre; el servidor valida que la fuente siga perteneciendo a ese historial y a un módulo consultable. Si ya fue sustituida, se recarga el historial para operar sobre su registro vigente. Los comprobantes previos no se reescriben y una aclaración no debe interpretarse como una modificación operativa de ellos.
+
+
+La precisión de microsegundos de las fechas de rectificación se aplica en `0030_rectification_timestamp_precision.sql`. La migración 0029 conserva su contenido original para que los servidores que ya la iniciaron o aplicaron puedan reiniciar con la comprobación de checksum intacta. No se requiere borrar tablas ni modificar `schema_migrations`.
+
+
+### Revisión de perfiles operativos
+
+El informe [Revisión local de los seis perfiles](docs/REVISION_SEIS_PERFILES.md) documenta la matriz de referencia, las comprobaciones permitidas/denegadas y el flujo compartido entre responsables. `tests/test_operational_profiles.py` configura los roles mediante la API en una base temporal; `tests/fixtures/profile_matrix.json` contiene la asignación explícita de prueba, sin cambiar roles reales. La revisión completa aprobó 215 pruebas backend y 253 frontend, además de compilación y navegación simulada en Chrome. La validación posterior de MySQL con carga y concurrencia real está documentada por separado en `docs/VALIDACION_MYSQL.md`.
+
+
+### Validación integral en MySQL y pruebas simultáneas
+
+El informe [Validación de MySQL, volumen y concurrencia](docs/VALIDACION_MYSQL.md) documenta 237 pruebas MySQL y 215 SQLite aprobadas. Incluye cinco escenarios de escrituras realmente simultáneas y una carga de 1,000 animales, 5,000 pesajes, 10 lotes y movimientos económicos/alimentarios. Se usan instancias y bases temporales, no datos del rancho.
+
+Con MySQL Server instalado localmente, ejecutar desde el backend:
+
+```bash
+python -m scripts.validate_mysql --suite all
+```
+
+Las modalidades `--suite migrations`, `--suite concurrency` y `--suite volume` repiten cada parte. El comando inicializa su propio MySQL sin puerto de red, pasa una URL de pruebas por socket a pytest, conserva los informes/logs y detiene el servidor por su interfaz administrativa. La opción de pytest `--mysql-api` permite ejecutar la batería de API sobre esquemas creados y migrados de forma independiente, sin cambiar el fixture SQLite predeterminado.
+
+El control de pesos diarios usa ahora una lectura de bloqueo actual después de esperar por el animal, para impedir dobles capturas bajo MySQL REPEATABLE READ. El listado de animales precarga padres, salidas y ubicaciones por página; en la carga medida pasó de 81 a 8 consultas por 25 animales conservando su respuesta. La migración nueva `0031_capture_timestamp_precision.sql` preserva los microsegundos de captura para mantener el orden y la misma fecha entre alta/consulta. No modifica migraciones anteriores ni reconstruye fracciones de tiempo ya descartadas.
+
+
+## Despliegue preparado
+
+La instalación de producción con Docker, HTTPS, límite de login, frontend del mismo origen y comprobaciones de disponibilidad está documentada en [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md). Está validada localmente; aún no se ha publicado porque no hay servidor. El desarrollo local conserva sus comandos actuales.
+
+
+## Respaldos y recuperación
+
+[Guía de respaldos y restauración](docs/RESPALDOS_Y_RESTAURACION.md): simulacro local sin Aiven (`python -m scripts.validate_recovery`), exportación mediante archivo privado del cliente MySQL y verificador que restaura exclusivamente en un servidor local nuevo sin red. Aiven se usa solo para pruebas. La política del servidor definitivo y una copia real independiente se configurarán/comprobarán cuando se asigne el destino.
+
+
+## Guía para los usuarios del rancho
+
+La [Guía de operación](docs/GUIA_DE_OPERACION.md) explica los pasos por pantalla, las correcciones históricas, la interpretación de costos y los problemas frecuentes. El [formato de entrega de responsabilidades](docs/ENTREGA_DE_RESPONSABILIDADES.md) permite registrar pendientes y comprobar accesos al cambiar de encargado o veterinario.
+
+Aiven es el entorno temporal de pruebas. Quedan dos puntos para el servidor definitivo: publicar/migrar/verificar el sistema y configurar/probar sus respaldos. No se requiere contratar ni mantener Aiven para dar esos pasos.
+
+
+## Perfil y foto del usuario
+
+En el menú del usuario → **Mi perfil** se consultan nombre, segundo nombre, apellidos, correo, teléfono y rol; **Editar datos** permite modificar los datos personales y se puede agregar o reemplazar la foto propia. No requiere permisos de administración de usuarios.
+
+- `GET /api/v1/profile`: perfil de la sesión.
+- `PATCH /api/v1/profile`: modificación parcial de nombre, segundo nombre, apellidos, correo y teléfono del usuario autenticado; valida correo único, conserva foto y sesión, audita cambios y rechaza rol, permisos, estado, contraseña, IDs o URLs de foto. Segundo nombre/teléfono vacíos se guardan como nulos. No requiere otra migración.
+- `POST /api/v1/profile/photo`: multipart con campo `file`, autenticado, sin ID de otro usuario. JPEG/PNG/WebP estáticos hasta 5 MB y 25 megapíxeles; validación del contenido real, orientación EXIF aplicada, reducción máxima a 1024 × 1024 sin deformar, WebP sin metadatos originales.
+- Guarda el archivo en `upload/photos_profile` y solo la URL relativa en `users.profile_photo_url`. Se devuelve en login, `/auth/me`, perfil y respuestas de usuario; el frontend resuelve la URL contra el origen de la API y refresca el avatar.
+- Nombre: rol y primer nombre normalizados sin espacios/acentos/caracteres especiales, seguidos de fecha UTC `YYYYMMDDHHMMSSffffff`, extensión `.webp`. La precisión y creación exclusiva evitan sobrescribir archivos homónimos. No utiliza el nombre enviado por el navegador.
+- El cambio bloquea la fila del usuario; un fallo de guardado/commit retira el archivo nuevo y conserva el anterior. Después de guardar la referencia se elimina la foto previa; si el sistema de archivos impide retirarla se deja diagnóstico en el log. Se auditan las URLs anterior y nueva.
+- Migración nueva e inmutable `0032_profile_photo.sql`; se aplica al iniciar. `PROFILE_PHOTOS_DIR` permite configurar otro directorio físico sin cambiar la URL pública `/upload/photos_profile/`. Las fotos se sirven como archivos públicos por esa URL, no como rutas autenticadas.
+- Compose conserva las fotos en un volumen `profile_photos`; Nginx enruta sus URLs a la API y admite el multipart de la foto. El directorio no se incluye en Git ni en la imagen. Para migración o recuperación hay que copiar/resguardar también los archivos: un dump SQL conserva las URLs, no las imágenes.
+
+Verificación: conversión/rotación/metadatos, límite y rechazo de archivos inválidos, reemplazo y rollback, permisos propios, migración de usuarios existentes y reemplazos simultáneos reales en MySQL aislado; pruebas frontend y Chrome de escritorio/móvil con API simulada.

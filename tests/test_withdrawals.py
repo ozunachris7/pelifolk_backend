@@ -12,10 +12,14 @@ from tests.test_programs import program, application
 def treatment(client, headers, animal_id, p, **values):
     case = create_case(client, headers, animal_id).json()
     response = client.post(f"/api/v1/health/cases/{case['id']}/treatments", headers=headers,
-        json=dict(product_id=p['id'], start_date='2024-01-03', dose_value='2',
-                  dose_unit_id=1, route_id=1, duration_days=3, **values))
+        json={'product_id':p['id'], 'start_date':'2024-01-03', 'dose_value':'2',
+              'dose_unit_id':1, 'route_id':1, 'duration_days':3, **values})
     assert response.status_code == 201, response.text
-    return response.json()
+    recorded = response.json()
+    from tests.test_doses import dose
+    r = dose(client,headers,recorded,p,applied_at=recorded['last_day']+'T10:00:00-06:00')
+    assert r.status_code == 201, r.text
+    return recorded
 
 
 def check(client, headers, animal_id, day):
@@ -45,6 +49,7 @@ def test_snapshot_boundary_and_exit_audit(api):
         assert db.get(EventTreatmentModel, (t['id'], p['id'])).withdrawal_days == 7
         audit = db.scalar(select(AuditModel).where(AuditModel.record_id == response.json()['id']))
         assert audit.new_values['withdrawal']['status'] == 'pending'
+        assert audit.new_values['withdrawal']['application_count'] == 1
     assert client.get('/api/v1/health/withdrawals',headers=h).json()['total'] == 0
 
 
@@ -102,6 +107,8 @@ def test_multiple_products_and_replaced_events(api):
         db.add(replacement)
         db.commit()
     result = check(client, h, a['id'], '2024-01-10')
-    assert result['treatment_count'] == 1 and result['status'] == 'complete'
-    assert result['release_date'] == '2024-01-06'
+    assert result['treatment_count'] == 2 and result['status'] == 'unknown'
+    assert result['release_date'] is None
+    detail = client.get('/api/v1/health/animals/'+a['id']+'/withdrawal',headers=h).json()
+    assert 'replaced_treatment' in next(i for i in detail['items'] if i['event_id']==first['id'])['review_reasons']
     assert check(client,h,a['id'],'2024-01-05')['in_treatment']

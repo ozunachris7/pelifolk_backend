@@ -1,0 +1,11 @@
+# Copy to a private file, replace placeholders, then chmod 600 that copy.
+# This is a MySQL client file, not the API .env. Never place passwords in CLI arguments.
+[client]
+host=AIVEN_HOST
+port=AIVEN_PORT
+user=BACKUP_USER
+password="REPLACE_WITH_PASSWORD"
+ssl-mode=VERIFY_IDENTITY
+ssl-ca=/ABSOLUTE/PATH/TO/aiven-ca.pem
+default-character-set=utf8mb4
+connect-timeout=10

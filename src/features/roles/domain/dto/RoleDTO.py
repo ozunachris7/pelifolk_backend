@@ -1,6 +1,6 @@
 import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from src.features.roles.domain.entities.Role import PERMISSIONS
+from src.features.roles.domain.entities.Role import PERMISSIONS, HEALTH_ACTIONS
 
 
 class RoleCreate(BaseModel):
@@ -22,6 +22,8 @@ class RoleCreate(BaseModel):
     def known_permissions(cls, value):
         if set(value) - PERMISSIONS:
             raise ValueError("Unknown permission")
+        if set(value) & HEALTH_ACTIONS and 'health:read' not in value:
+            raise ValueError('Health actions require health:read')
         return sorted(set(value))
 
 
