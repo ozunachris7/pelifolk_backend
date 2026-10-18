@@ -7,6 +7,13 @@ Pelifolk administra **un rancho**. Aiven se utiliza temporalmente para pruebas: 
 ## Índice
 
 - [Inicio de sesión y accesos](#inicio-de-sesión-y-accesos)
+- [Menú lateral con submenús](#menú-lateral-con-submenús)
+- [Gráfica económica del Resumen](#gráfica-económica-del-resumen)
+- [Distribución del hato](#distribución-del-hato)
+- [Gráfica de casos sanitarios](#gráfica-de-casos-sanitarios)
+- [Evolución sanitaria por mes](#evolución-sanitaria-por-mes)
+- [Montas y partos por mes](#montas-y-partos-por-mes)
+- [Alimentación por mes](#alimentación-por-mes)
 - [Rutina de trabajo](#rutina-de-trabajo)
 - [Usuarios y permisos](#usuarios-y-permisos)
 - [Animales, razas y genealogía](#animales-razas-y-genealogía)
@@ -51,6 +58,84 @@ No se puede utilizar un correo que ya pertenezca a otro usuario. La foto se cons
 4. Comprobar que aparece la nueva imagen en el perfil y en el encabezado. Al reemplazarla, la anterior se elimina del almacenamiento activo.
 
 Cada persona cambia únicamente su propia foto; no necesita administrar usuarios. Los datos personales se muestran y editan separados: nombre, segundo nombre, apellidos, correo y teléfono.
+
+## Menú lateral con submenús
+
+Pulsar el nombre de un grupo para desplegar sus opciones. Se mantiene un grupo abierto a la vez y se abre automáticamente el correspondiente a la pantalla actual. Solo se muestran grupos y opciones permitidos para la cuenta.
+
+| Grupo | Opciones |
+| --- | --- |
+| Hato | Animales, Genealogía, Razas, Lotes, Ubicaciones |
+| Operación | Pesajes (área de Manejo y destetes), Sanidad, Reproducción, Alimentación |
+| Economía | Movimientos (ingresos, gastos y catálogos), Salidas |
+| Administración | Usuarios, Roles y permisos, Auditoría |
+
+Resumen y Reportes permanecen como accesos directos. En móvil, abrir **Menú**, desplegar el grupo y seleccionar el destino; desplegar un grupo no cierra el menú. Para los pasos de esta guía que mencionan Manejo, entrar por **Operación → Pesajes**; para los movimientos económicos, usar **Economía → Movimientos**.
+
+## Gráfica económica del Resumen
+
+En **Resumen**, debajo de las cifras económicas, se comparan los ingresos y gastos registrados por mes. Solo aparece con permiso para consultar Economía. La gráfica inicia con el mes actual y los cinco anteriores; las cifras de las tarjetas superiores siguen correspondiendo al mes actual.
+
+Usar **3 meses**, **6 meses** o **12 meses**, o elegir **Desde** y **Hasta** y pulsar **Ver gráfica**. El rango admite hasta 24 meses y no supera hoy. Si el rango comienza o termina a mitad de mes, solo se incluyen los movimientos entre esas fechas. Los meses sin movimientos permanecen en la consulta.
+
+Las gráficas usan Chart.js, con animación de entrada y tooltips al pasar el cursor o tocar las barras. Pulsar una pareja de barras para ver ingresos, gastos y balance de ese mes. Con Tab, enfocar la gráfica y usar las flechas izquierda/derecha para seleccionar el mes; Inicio y Fin llevan a los extremos. **Ver importes por mes** abre la tabla con los valores exactos en MXN. La gráfica se adapta al ancho de la pantalla y al modo claro u oscuro; respeta la preferencia del dispositivo de reducir movimiento. **Actualizar** del Resumen también actualiza la gráfica con sus fechas seleccionadas.
+
+Se utiliza la fecha guardada en cada ingreso y gasto, sin limitarse a una página de resultados. No se suman los consumos calculados de alimentación o tratamientos. El balance representa los registros disponibles y no certifica utilidad final. Si no hay movimientos, se muestra un mensaje para cambiar el periodo o capturarlos en Economía.
+
+## Distribución del hato
+
+En **Resumen → Distribución del hato** se muestran dos comparaciones con Chart.js, disponibles para quienes pueden consultar animales:
+
+- **Sexo de los animales activos:** hembras y machos que continúan en el hato. Los porcentajes se calculan sobre los activos; se excluyen las bajas.
+- **Activos y bajas:** estado de todos los animales registrados al corte. Los porcentajes se calculan sobre el total registrado y las bajas agrupan las salidas.
+
+Las cifras proceden del resumen completo del rancho, independientemente de la paginación del listado. **Actualizar** del Resumen actualiza ambos gráficos. El corte se indica en el encabezado; las fechas de la gráfica económica son independientes.
+
+Pasar el cursor o tocar las barras para ver cantidades y porcentajes. Con Tab se enfoca cada gráfica y con las flechas izquierda/derecha se selecciona una categoría. **Ver cantidades por sexo** y **Ver cantidades por estado** despliegan las tablas. En móvil se muestran una debajo de otra. Si no hay animales, o no quedan activos, se informa sin inventar barras ni porcentajes.
+
+## Gráfica de casos sanitarios
+
+En **Resumen → Casos sanitarios por estado**, las cuentas con permiso para consultar Sanidad pueden comparar casos **abiertos** (ámbar), **en tratamiento** (azul) y **cerrados** (turquesa). Incluye todos los casos registrados, independientemente de su fecha de inicio, y usa su estado actual al corte indicado. Las fechas de la gráfica económica no filtran esta distribución.
+
+Se cuentan casos, no animales únicos: un animal puede tener varios. Los porcentajes de la gráfica y la tabla se calculan sobre el total de casos. La tarjeta superior de casos sin cerrar sigue mostrando únicamente abiertos y en tratamiento.
+
+Pasar el cursor o tocar las barras para ver cantidades y porcentajes; pulsarlas cambia el detalle seleccionado. También se puede enfocar la gráfica con Tab y usar las flechas izquierda/derecha. La tabla muestra los tres estados y el total. Si todavía no hay casos, se informa sin inventar barras. **Ver Sanidad** abre el módulo y **Actualizar** del Resumen vuelve a consultar los estados, incluidos los casos que se hayan cerrado o reabierto.
+
+## Evolución sanitaria por mes
+
+En **Resumen → Evolución sanitaria por mes**, debajo de la distribución de casos por estado, se comparan **Casos iniciados** (azul) y **Cierres vigentes** (violeta). Requiere permiso para consultar Sanidad. Cada caso se cuenta una vez por su fecha de inicio y, si actualmente está cerrado, una vez por la fecha de cierre guardada. El cierre puede corresponder a un caso iniciado antes del periodo elegido. Reabrir un caso retira su cierre de esta gráfica, aunque el historial de cambios se conserva en Sanidad. Si vuelve a cerrarse, cuenta en su nueva fecha de cierre. No representa todos los episodios históricos de cierre, una tasa de recuperación ni el saldo de casos pendientes.
+
+Se muestran seis meses inicialmente. Usar **3 meses**, **6 meses**, **12 meses** o indicar fechas y pulsar **Ver gráfica**; se admiten hasta 24 meses, sin superar hoy. Los extremos parciales respetan las fechas exactas y los meses sin actividad siguen visibles. Estos filtros son independientes de Economía, Reproducción y Alimentación. **Actualizar** del Resumen conserva el periodo elegido y vuelve a consultar el estado de los casos.
+
+Pasar el cursor o tocar las barras muestra un tooltip oscuro; pulsarlas o enfocarlas con Tab y usar las flechas selecciona el detalle mensual. **Ver registros por mes** muestra las cantidades exactas en tabla. Si no hay inicios ni cierres en el periodo, aparece un mensaje sin barras ficticias.
+
+Para cargar datos de prueba directamente en la base configurada, ejecutar `python -m scripts.seed_health_trend_demo` con el entorno virtual del backend activo. Agrega 12 casos ficticios repartidos en seis meses, siete de ellos cerrados, al animal **DEMO-PESO-001**. Los motivos y notas indican **SIMULACIÓN**. No modifica casos existentes ni duplica los ejemplos al repetirlo en el mismo mes. Son datos para probar la interfaz; también aparecen en Sanidad y en los totales del Resumen.
+
+## Montas y partos por mes
+
+En **Resumen → Montas y partos por mes**, las cuentas con permiso para consultar Reproducción pueden comparar montas (violeta) y partos (turquesa). Inicialmente se muestran el mes actual y los cinco anteriores. Cada parto cuenta una vez, aunque tenga varias crías; se incluyen solo eventos vigentes, excluyendo registros reemplazados por rectificaciones. Una fecha rectificada mueve el registro al mes correspondiente.
+
+Elegir **3 meses**, **6 meses** o **12 meses**, o indicar **Desde** y **Hasta** y pulsar **Ver gráfica**. Se admiten hasta 24 meses, sin fechas futuras; los extremos parciales incluyen únicamente las fechas elegidas y los meses sin actividad permanecen visibles. Este filtro es independiente del de Economía.
+
+Pasar el cursor, tocar las barras o enfocarlas con Tab y usar las flechas permite consultar el mes seleccionado. La tabla mensual conserva los valores exactos. **Actualizar** del Resumen vuelve a consultar la gráfica conservando sus fechas. Estas cantidades representan eventos registrados; no son tasas de fertilidad ni pronósticos de partos.
+
+## Alimentación por mes
+
+En **Resumen → Alimentación por mes**, las cuentas con permiso para consultar Alimentación pueden ver el costo conocido (ámbar) y la cantidad consumida (azul). Se muestran seis meses inicialmente, con opciones de 3, 6 o 12 meses y fechas personalizadas de hasta 24 meses sin superar hoy. Los filtros son independientes de las otras gráficas; los meses sin registros se conservan y los extremos parciales incluyen solo las fechas elegidas.
+
+El selector **Unidad** cambia la gráfica de cantidades entre kg, sacos, pacas u otras unidades registradas en el periodo. No se suman unidades distintas ni se convierten automáticamente. Los consumos individuales y de lotes se incluyen; un consumo de lote se cuenta una sola vez, por su cantidad completa.
+
+Cada consumo se valora con el precio vigente en su fecha y se redondea a centavos antes de sumar, igual que en los reportes. Las cantidades sin precio sí se incluyen y se indica cuántos consumos no pudieron valorarse. Si ninguno tiene precio, se muestra la gráfica de cantidades y un mensaje en lugar de dibujar un costo conocido. Un precio de cero sí se considera conocido. Este costo no equivale a un gasto pagado y no se suma a los gastos de Economía.
+
+Pasar el cursor o tocar una barra muestra su tooltip oscuro. Pulsarla, o enfocar la gráfica con Tab y usar las flechas, selecciona el mismo mes en ambas gráficas y muestra cantidades, costo y registros sin precio. **Ver consumos por mes** presenta todas las unidades y valores exactos en una tabla. **Actualizar** del Resumen conserva los filtros de fecha y la unidad cuando sigue disponible.
+
+Para preparar datos ficticios en la base configurada, ejecutar `python -m scripts.seed_feeding_demo` desde el backend con su entorno virtual activo. Agrega 12 consumos en seis meses, dos alimentos identificados como **SIMULACIÓN · Gráfica alimentación** y precios ficticios, usando el animal **DEMO-PESO-001**. No altera registros existentes y no duplica los consumos al repetirlo durante el mismo mes. Estos datos son solo para visualizar y probar el sistema, no representan raciones ni precios reales. Volver a Resumen y pulsar **Actualizar** para verlos.
+
+## Consultas extensas y formularios
+
+Las fichas de animales, los casos y el historial sanitario, los incidentes, el historial reproductivo, los descendientes, los detalles de indicadores, los resultados económicos y los avisos y aplicaciones de programas se consultan en páginas dentro del panel. Usar **Volver al listado** para regresar conservando los filtros y la paginación. En las aplicaciones de programas, **Volver a los avisos** regresa al programa seleccionado.
+
+Los formularios breves de alta y edición conservan su ventana modal. Desde un historial reproductivo, consultar un evento abre su detalle breve sobre el historial.
 
 ## Rutina de trabajo
 
@@ -141,6 +226,28 @@ Los intervalos incluyen sus días de inicio y final. Si se cierra una pertenenci
 Los costos repartidos por lote dependen de sus miembros históricos. Una corrección de pertenencias puede cambiar consultas posteriores de reparto; conservar el motivo del cambio y revisar el periodo afectado.
 
 ## Pesajes y destetes
+
+### Consultar la evolución del peso
+
+Entrar en **Hato → Animales**, abrir **Ver ficha** y consultar **Evolución del peso**. Se necesita permiso de lectura de pesajes. Se muestran todos los pesajes efectivos del animal, incluidos los registrados al destete; los registros reemplazados no vuelven a contarse. **Actualizar** vuelve a cargar el historial y sus rectificaciones.
+
+La gráfica usa las fechas reales para separar las mediciones y ajusta la escala vertical a los pesos visibles. La línea solo une los puntos registrados. Con un solo pesaje se muestra el punto y se informa que todavía no hay una evolución para comparar; sin pesajes, se muestra un mensaje.
+
+Pasar el cursor o tocar un punto muestra su tooltip; pulsarlo permite consultar fecha, peso, responsable y notas debajo de la gráfica. Con Tab, enfocar la gráfica y usar las flechas izquierda/derecha para seleccionar pesajes; Inicio y Fin llevan a los extremos. El cambio y el promedio diario comparan con el pesaje efectivo anterior, incluso cuando este queda fuera de las fechas filtradas. Un cambio negativo se identifica como pérdida de peso registrada.
+
+Para acotar la consulta, elegir **Desde** y/o **Hasta** y pulsar **Aplicar fechas**. **Ver todo** restaura el historial completo. **Ver mediciones del periodo** despliega los valores exactos en una tabla. La gráfica se adapta al ancho del móvil y anima sus mediciones al cargarse, salvo que el dispositivo solicite reducir movimiento. **Ir a Pesajes** abre el módulo donde se capturan las mediciones.
+
+### Comparar pesos entre animales
+
+Entrar en **Operación → Pesajes → Comparar pesos**. Requiere permiso para consultar Pesajes. Escribir nombre o SINIIGA en **Agregar animal** y elegir una opción; repetir para seleccionar de dos a cinco animales. Se pueden incluir animales con salida registrada para comparar su historial. No cambia los animales disponibles al registrar un pesaje nuevo, donde solo se ofrecen activos. Las etiquetas muestran el color de cada animal; **×** permite quitarlo.
+
+Elegir **Desde** y **Hasta** y pulsar **Comparar pesos**. Inicialmente se consultan seis meses; **Todo el historial** vacía Desde y permite consultar desde el primer registro al volver a pulsar Comparar pesos. Cambiar animales o fechas retira el resultado anterior para evitar mostrar una comparación con filtros desactualizados.
+
+La gráfica usa las fechas reales y los pesos vigentes de cada historial completo, incluidos destetes con peso y las rectificaciones efectivas. Una fecha sin medición para un animal no se convierte en cero ni se estima: el detalle muestra **Sin pesaje ese día** y la tabla un guion. Las líneas solo unen los pesajes conocidos de cada animal. No se comparan edades ni se calculan tasas de crecimiento entre animales. Los animales sin pesajes en el periodo se identifican en la leyenda; si ninguno tiene mediciones, aparece un mensaje en lugar de una gráfica.
+
+Pasar el cursor o tocar un punto muestra su tooltip oscuro. Pulsarlo o enfocar la gráfica con Tab y usar las flechas selecciona una fecha y muestra los pesos disponibles de todos los animales. **Ver pesos por fecha** presenta los valores exactos y señala los destetes. En móvil, la tabla se desplaza dentro de su propia área.
+
+Para cargar ejemplos directamente en la base configurada, ejecutar `python -m scripts.seed_weight_comparison_demo` con el entorno virtual del backend activo. Crea **DEMO · Comparación Brisa** (`DEMO-COMP-002`) y **DEMO · Comparación Canelo** (`DEMO-COMP-003`), con seis pesajes ficticios cada uno y notas de **SIMULACIÓN**. Seleccionar ambos y pulsar Comparar pesos; opcionalmente agregar **DEMO · Gráfica de peso** (`DEMO-PESO-001`) si ya existe. El comando no modifica animales existentes ni duplica los pesajes si se repite con el mismo plan y fecha de ejecución.
 
 ### Pesaje ordinario
 

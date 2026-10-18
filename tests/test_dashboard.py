@@ -63,3 +63,33 @@ def test_summary_monthly_finance_feeding_and_birth_closes_pregnancy(api):
     assert data['finance']['balance']==70
     assert data['feeding']==dict(consumptions=1,cost='17.00',unpriced_count=0)
     assert data['breeding']==dict(pregnant=0,births=1)
+
+
+def test_summary_health_distribution_counts_cases_and_tracks_reopening(api):
+    client, factory = api
+    owner = login(client)
+    animal_id = animal(client, owner, birth_date='2020-01-01')['id']
+    initial = client.get('/api/v1/dashboard/summary', headers=owner).json()['health']
+    assert initial['total_cases'] == initial['closed_cases'] == 0
+    today = date.today()
+    with factory.begin() as db:
+        for status in ['open', 'open', 'under_treatment', 'closed', 'closed', 'closed']:
+            db.add(HealthCaseModel(animal_id=animal_id, reason='Distribution test', status=status,
+                start_date=today - timedelta(days=100), closed_date=today if status == 'closed' else None))
+    health = client.get('/api/v1/dashboard/summary', headers=owner).json()['health']
+    assert {key: health[key] for key in ['open_cases', 'treatment_cases', 'closed_cases', 'total_cases']} == dict(
+        open_cases=2, treatment_cases=1, closed_cases=3, total_cases=6)
+    worker = login(client, 'worker@example.com')
+    assert client.get('/api/v1/dashboard/summary', headers=worker).json()['health'] is None
+    with factory.begin() as db:
+        closed = db.scalar(select(HealthCaseModel).where(HealthCaseModel.status == 'closed'))
+        closed.status = 'open'
+        closed.closed_date = None
+        role = db.scalar(select(RoleModel).where(RoleModel.name == 'worker'))
+        db.add(RolePermissionModel(role_id=role.id, permission='health:read'))
+    visible = client.get('/api/v1/dashboard/summary', headers=worker).json()
+    assert visible['health']['open_cases'] == 3
+    assert visible['health']['treatment_cases'] == 1
+    assert visible['health']['closed_cases'] == 2
+    assert visible['health']['total_cases'] == 6
+    assert visible['finance'] is None and visible['herd'] is None

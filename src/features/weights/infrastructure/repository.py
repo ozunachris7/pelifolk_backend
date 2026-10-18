@@ -23,8 +23,10 @@ class SQLWeightRepository:
     def summary(animal):
         return dict(id=animal.id, name=animal.name, siniiga=animal.siniiga)
 
-    def options(self, q, limit):
-        statement = select(AnimalModel).where(~has_exited(AnimalModel.id, date.today()))
+    def options(self, q, limit, *, include_exited=False):
+        statement = select(AnimalModel)
+        if not include_exited:
+            statement = statement.where(~has_exited(AnimalModel.id, date.today()))
         if q:
             statement = statement.where(or_(AnimalModel.name.icontains(q, autoescape=True), AnimalModel.siniiga.icontains(q, autoescape=True)))
         return [self.summary(a) for a in self.db.scalars(statement.order_by(AnimalModel.name, AnimalModel.id).limit(limit))]

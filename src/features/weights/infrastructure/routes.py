@@ -16,8 +16,8 @@ def weights(q: str = Query('', max_length=100), offset: int = Query(0, ge=0), li
     return repo.page(q.strip(), offset, limit)
 
 @router.get('/animal-options', response_model=list[AnimalSummary])
-def options(q: str = Query('', max_length=100), limit: int = Query(50, ge=1, le=100), actor=Depends(require_permission('weights:read')), repo=Depends(repository)):
-    return repo.options(q.strip(), limit)
+def options(q: str = Query('', max_length=100), limit: int = Query(50, ge=1, le=100), include_exited: bool = False, actor=Depends(require_permission('weights:read')), repo=Depends(repository)):
+    return repo.options(q.strip(), limit, include_exited=include_exited)
 
 @router.get('/animals/{animal_id}/history', response_model=WeightHistory)
 def history(animal_id: UUID, actor=Depends(require_permission('weights:read')), repo=Depends(repository)):

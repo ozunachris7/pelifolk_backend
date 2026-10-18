@@ -1,17 +1,172 @@
 from datetime import date, datetime, time
-from fastapi import APIRouter, Depends
+from decimal import Decimal, ROUND_HALF_UP
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func, exists
 from sqlalchemy.orm import Session, aliased
 from src.core.database import get_db
 from src.core.herd import has_exited
 from src.core.models import (AnimalModel, EventModel, HealthCaseModel, HealthProgramModel,
-    ProductModel, EventPregnancyModel)
-from src.features.auth.infrastructure.dependencies import current_user
+    ProductModel, EventPregnancyModel, IncomeModel, ExpenseModel, EventMatingModel, EventBirthModel, FeedingModel, FeedModel, UnitModel)
+from src.features.auth.infrastructure.dependencies import current_user, require_permission
 from src.features.finance.infrastructure.repository import SQLFinanceRepository
 from src.features.feeding.infrastructure.repository import SQLFeedingRepository
 from src.features.health.infrastructure.program_repository import SQLProgramRepository
 
 router = APIRouter(prefix='/dashboard', tags=['Dashboard'])
+
+
+@router.get('/finance-trend')
+def finance_trend(date_from: date | None = None, date_to: date | None = None,
+                  actor=Depends(require_permission('finance:read')),
+                  db: Session=Depends(get_db, scope='function')):
+    today = date.today()
+    finish = date_to or today
+    # Include the current month and the preceding five by default.
+    month_index = max(12, finish.year * 12 + finish.month - 1 - 5)
+    start = date_from or date(month_index // 12, month_index % 12 + 1, 1)
+    month_count = (finish.year - start.year) * 12 + finish.month - start.month + 1
+    if start > finish or finish > today or month_count > 24:
+        raise HTTPException(422, 'Choose an ordered period of at most 24 months, ending no later than today')
+
+    months = {}
+    for index in range(month_count):
+        absolute = start.year * 12 + start.month - 1 + index
+        month = date(absolute // 12, absolute % 12 + 1, 1).isoformat()[:7]
+        months[month] = dict(month=month, income_total=Decimal('0.00'),
+                             expense_total=Decimal('0.00'), income_count=0, expense_count=0)
+    # Aggregate the full date range in SQL, independently from paginated movement lists.
+    for model, prefix in ((IncomeModel, 'income'), (ExpenseModel, 'expense')):
+        year = func.extract('year', model.date)
+        month = func.extract('month', model.date)
+        rows = db.execute(select(year, month, func.sum(model.amount), func.count()).where(
+            model.date >= start, model.date <= finish).group_by(year, month))
+        for y, m, amount, count in rows:
+            bucket = months[f'{int(y):04d}-{int(m):02d}']
+            bucket[f'{prefix}_total'] = amount
+            bucket[f'{prefix}_count'] = count
+
+    items = []
+    for bucket in months.values():
+        items.append({**bucket,
+            'income_total': format(bucket['income_total'], '.2f'),
+            'expense_total': format(bucket['expense_total'], '.2f'),
+            'balance': format(bucket['income_total'] - bucket['expense_total'], '.2f')})
+    return dict(as_of=today, date_from=start, date_to=finish, currency='MXN', items=items,
+                income_total=format(sum((b['income_total'] for b in months.values()), Decimal('0.00')), '.2f'),
+                expense_total=format(sum((b['expense_total'] for b in months.values()), Decimal('0.00')), '.2f'),
+                movement_count=sum(b['income_count'] + b['expense_count'] for b in months.values()))
+
+
+@router.get('/breeding-trend')
+def breeding_trend(date_from: date | None = None, date_to: date | None = None,
+                   actor=Depends(require_permission('breeding:read')),
+                   db: Session=Depends(get_db, scope='function')):
+    today = date.today()
+    finish = date_to or today
+    month_index = max(12, finish.year * 12 + finish.month - 1 - 5)
+    start = date_from or date(month_index // 12, month_index % 12 + 1, 1)
+    month_count = (finish.year - start.year) * 12 + finish.month - start.month + 1
+    if start > finish or finish > today or month_count > 24:
+        raise HTTPException(422, 'Choose an ordered period of at most 24 months, ending no later than today')
+    months = {}
+    for index in range(month_count):
+        absolute = start.year * 12 + start.month - 1 + index
+        month = date(absolute // 12, absolute % 12 + 1, 1).isoformat()[:7]
+        months[month] = dict(month=month, matings=0, births=0)
+    replacement = aliased(EventModel)
+    effective = ~exists(select(replacement.id).where(replacement.replaced_event_id == EventModel.id))
+    year = func.extract('year', EventModel.date)
+    month = func.extract('month', EventModel.date)
+    for model, event_type, key in ((EventMatingModel, 5, 'matings'), (EventBirthModel, 7, 'births')):
+        # Count effective typed events, never offspring rows or a paginated event list.
+        rows = db.execute(select(year, month, func.count()).select_from(EventModel)
+            .join(model, model.event_id == EventModel.id).where(
+                EventModel.event_type_id == event_type, effective,
+                EventModel.date >= datetime.combine(start, time.min),
+                EventModel.date <= datetime.combine(finish, time.max)).group_by(year, month))
+        for y, m, count in rows:
+            months[f'{int(y):04d}-{int(m):02d}'][key] = count
+    items = list(months.values())
+    matings = sum(item['matings'] for item in items)
+    births = sum(item['births'] for item in items)
+    return dict(as_of=today, date_from=start, date_to=finish, items=items,
+                matings_total=matings, births_total=births, event_count=matings + births)
+
+
+@router.get('/health-trend')
+def health_trend(date_from: date | None = None, date_to: date | None = None,
+                   actor=Depends(require_permission('health:read')),
+                   db: Session=Depends(get_db, scope='function')):
+    today = date.today()
+    finish = date_to or today
+    month_index = max(12, finish.year * 12 + finish.month - 1 - 5)
+    start = date_from or date(month_index // 12, month_index % 12 + 1, 1)
+    month_count = (finish.year - start.year) * 12 + finish.month - start.month + 1
+    if start > finish or finish > today or month_count > 24:
+        raise HTTPException(422, 'Choose an ordered period of at most 24 months, ending no later than today')
+    months = {}
+    for index in range(month_count):
+        absolute = start.year * 12 + start.month - 1 + index
+        month = date(absolute // 12, absolute % 12 + 1, 1).isoformat()[:7]
+        months[month] = dict(month=month, started=0, closed=0)
+    # Count one start per case and only its current, saved closure. Reopened cases have no closure.
+    for column, key, closed_only in ((HealthCaseModel.start_date, 'started', False),
+                                     (HealthCaseModel.closed_date, 'closed', True)):
+        year = func.extract('year', column)
+        month = func.extract('month', column)
+        query = select(year, month, func.count()).where(column >= start, column <= finish)
+        if closed_only:
+            query = query.where(HealthCaseModel.status == 'closed')
+        for y, m, count in db.execute(query.group_by(year, month)):
+            months[f'{int(y):04d}-{int(m):02d}'][key] = count
+    items = list(months.values())
+    started = sum(item['started'] for item in items)
+    closed = sum(item['closed'] for item in items)
+    return dict(as_of=today, date_from=start, date_to=finish, items=items,
+                started_total=started, closed_total=closed, event_count=started + closed)
+
+
+@router.get('/feeding-trend')
+def feeding_trend(date_from: date | None = None, date_to: date | None = None,
+                  actor=Depends(require_permission('feeding:read')),
+                  db: Session=Depends(get_db, scope='function')):
+    today = date.today()
+    finish = date_to or today
+    month_index = max(12, finish.year * 12 + finish.month - 1 - 5)
+    start = date_from or date(month_index // 12, month_index % 12 + 1, 1)
+    month_count = (finish.year - start.year) * 12 + finish.month - start.month + 1
+    if start > finish or finish > today or month_count > 24:
+        raise HTTPException(422, 'Choose an ordered period of at most 24 months, ending no later than today')
+    months = {}
+    for index in range(month_count):
+        absolute = start.year * 12 + start.month - 1 + index
+        month = date(absolute // 12, absolute % 12 + 1, 1).isoformat()[:7]
+        months[month] = dict(month=month, total_cost=Decimal('0.00'),
+                             consumption_count=0, unpriced_count=0, quantities={})
+    price = SQLFeedingRepository.price_expression()
+    rows = db.execute(select(FeedingModel.date, FeedingModel.quantity, UnitModel.code, price)
+        .join(FeedModel, FeedModel.id == FeedingModel.feed_id)
+        .join(UnitModel, UnitModel.id == FeedModel.unit_id)
+        .where(FeedingModel.date >= start, FeedingModel.date <= finish))
+    quantities = {}
+    for day, quantity, code, unit_cost in rows:
+        bucket = months[day.isoformat()[:7]]
+        bucket['consumption_count'] += 1
+        bucket['quantities'][code] = bucket['quantities'].get(code, Decimal('0.00')) + quantity
+        quantities[code] = quantities.get(code, Decimal('0.00')) + quantity
+        if unit_cost is None:
+            bucket['unpriced_count'] += 1
+        else:
+            # Match feeding reports: use each consumption's historical price and round per row.
+            bucket['total_cost'] += (quantity * unit_cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    def units(values):
+        return [dict(unit_code=code, quantity=format(values[code], '.2f')) for code in sorted(values)]
+    items = [{**b, 'total_cost': format(b['total_cost'], '.2f'),
+              'quantities': units(b['quantities'])} for b in months.values()]
+    return dict(as_of=today, date_from=start, date_to=finish, items=items,
+                total_cost=format(sum((b['total_cost'] for b in months.values()), Decimal('0.00')), '.2f'),
+                consumption_count=sum(b['consumption_count'] for b in months.values()),
+                unpriced_count=sum(b['unpriced_count'] for b in months.values()), quantities=units(quantities))
 
 
 @router.get('/summary')
@@ -33,8 +188,8 @@ def summary(actor=Depends(current_user), db: Session=Depends(get_db, scope='func
         result['herd'] = dict(total=total, active=active_count, exited=total-active_count,
                               female=counts.get('female', 0), male=counts.get('male', 0))
     if 'health:read' in permissions:
-        cases = dict(db.execute(select(HealthCaseModel.status, func.count()).where(
-            HealthCaseModel.status != 'closed').group_by(HealthCaseModel.status)).all())
+        cases = dict(db.execute(select(HealthCaseModel.status, func.count())
+                                .group_by(HealthCaseModel.status)).all())
         pending = []
         attention_count = 0
         repo = SQLProgramRepository(db)
@@ -50,6 +205,7 @@ def summary(actor=Depends(current_user), db: Session=Depends(get_db, scope='func
         rank = {'overdue':0, 'due':1, 'upcoming':2, 'missing_birth_date':3}
         pending.sort(key=lambda p:(rank[p['status']], p['due_date'] or date.max, p['program_name'], p['animal']['id']))
         result['health'] = dict(open_cases=cases.get('open',0), treatment_cases=cases.get('under_treatment',0),
+                                closed_cases=cases.get('closed',0), total_cases=sum(cases.values()),
                                 attention_count=attention_count, pending=pending[:5])
         event_types.extend([1,2,3])
     if 'breeding:read' in permissions:
